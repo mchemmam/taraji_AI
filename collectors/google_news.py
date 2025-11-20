@@ -3,6 +3,7 @@ Google News collector for Taraji AI
 """
 from typing import List, Dict
 import time
+import re
 
 from gnews import GNews
 
@@ -11,19 +12,17 @@ from utils import log, clean_text, parse_date
 from config import settings
 
 
+def has_arabic(text: str) -> bool:
+    """Check if text contains Arabic characters"""
+    arabic_pattern = re.compile(r'[\u0600-\u06FF]')
+    return bool(arabic_pattern.search(text))
+
+
 class GoogleNewsCollector(BaseCollector):
     """Collect news articles from Google News"""
 
     def __init__(self):
         super().__init__("Google News")
-
-        # Initialize GNews
-        self.gnews = GNews(
-            language=settings.GNEWS_LANGUAGE,
-            country=settings.GNEWS_COUNTRY,
-            period=settings.GNEWS_PERIOD,
-            max_results=settings.GNEWS_MAX_RESULTS
-        )
 
         # Search queries for the club
         self.queries = [
@@ -45,11 +44,23 @@ class GoogleNewsCollector(BaseCollector):
         seen_urls = set()
 
         for query in self.queries:
-            log.info(f"Searching Google News for: {query}")
+            # Detect if query is in Arabic and use appropriate language setting
+            is_arabic = has_arabic(query)
+            language = 'ar' if is_arabic else settings.GNEWS_LANGUAGE
+
+            log.info(f"Searching Google News for: {query} (language={language})")
 
             try:
+                # Create GNews instance with appropriate language for this query
+                gnews = GNews(
+                    language=language,
+                    country=settings.GNEWS_COUNTRY,
+                    period=settings.GNEWS_PERIOD,
+                    max_results=settings.GNEWS_MAX_RESULTS
+                )
+
                 # Get news for this query
-                results = self.gnews.get_news(query)
+                results = gnews.get_news(query)
 
                 if not results:
                     log.warning(f"⚠️  No results for query: {query}")
