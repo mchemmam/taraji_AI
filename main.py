@@ -16,8 +16,8 @@ load_dotenv()
 
 from utils import log
 from storage import init_database, get_db
-from collectors import collect_google_news
-from processors import create_keyword_filter, detect_language
+from collectors import collect_google_news, collect_rss
+from processors import create_keyword_filter, detect_language, create_classifier
 
 
 def cmd_init():
@@ -33,18 +33,34 @@ def cmd_collect(test_mode=False):
     log.info("Starting Taraji AI News Collection")
     log.info("=" * 60)
 
-    # Step 1: Collect from Google News
-    log.info("\n[1/4] Collecting from Google News...")
-    articles = collect_google_news()
+    # Step 1: Collect from all sources
+    log.info("\n[1/6] Collecting from Google News...")
+    google_articles = collect_google_news()
+    log.info(f"Collected {len(google_articles)} articles from Google News")
+
+    log.info("\n[2/6] Collecting from RSS feeds...")
+    rss_articles = collect_rss()
+    log.info(f"Collected {len(rss_articles)} articles from RSS feeds")
+
+    # Combine all articles and deduplicate by URL
+    all_articles = google_articles + rss_articles
+    seen_urls = set()
+    articles = []
+    for article in all_articles:
+        url = article.get('url', '')
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            articles.append(article)
+
+    duplicates_removed = len(all_articles) - len(articles)
+    log.info(f"Total: {len(articles)} unique articles ({duplicates_removed} duplicates removed)")
 
     if not articles:
         log.warning("No articles collected!")
         return
 
-    log.info(f"Collected {len(articles)} articles")
-
-    # Step 2: Filter by keywords
-    log.info("\n[2/4] Filtering by keywords...")
+    # Step 3: Filter by keywords
+    log.info("\n[3/6] Filtering by keywords...")
     keyword_filter = create_keyword_filter()
     filtered_articles = keyword_filter.filter_articles(articles)
 
@@ -54,14 +70,22 @@ def cmd_collect(test_mode=False):
 
     log.info(f"Found {len(filtered_articles)} relevant articles")
 
-    # Step 3: Detect languages
-    log.info("\n[3/4] Detecting languages...")
+    # Step 4: Detect languages
+    log.info("\n[4/6] Detecting languages...")
     for article in filtered_articles:
         text = f"{article.get('title', '')} {article.get('description', '')}"
         article['language'] = detect_language(text)
 
-    # Step 4: Store in database
-    log.info("\n[4/4] Storing in database...")
+    # Step 5: Classify articles
+    log.info("\n[5/6] Classifying articles...")
+    classifier = create_classifier()
+    for article in filtered_articles:
+        title = article.get('title', '')
+        content = article.get('content', '') or article.get('description', '') or ''
+        article['category'] = classifier.classify(title, content)
+
+    # Step 6: Store in database
+    log.info("\n[6/6] Storing in database...")
     stored_count = 0
     duplicate_count = 0
 
@@ -119,6 +143,59 @@ def cmd_stats():
     log.info("=" * 60)
 
 
+def cmd_classify():
+    """Classify existing articles in database"""
+    log.info("=" * 60)
+    log.info("Classifying Existing Articles")
+    log.info("=" * 60)
+
+    classifier = create_classifier()
+
+    with get_db() as db:
+        # Get all articles
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT id, title, content, summary FROM articles")
+        articles = cursor.fetchall()
+
+        if not articles:
+            log.warning("No articles found in database!")
+            return
+
+        log.info(f"\nFound {len(articles)} articles to classify...")
+
+        classified_count = 0
+        category_counts = {}
+
+        for article in articles:
+            article_id = article['id']
+            title = article['title']
+            content = article['content'] or article['summary'] or ''
+
+            # Classify
+            category = classifier.classify(title, content)
+
+            # Update database
+            cursor.execute("""
+                UPDATE articles
+                SET category = ?
+                WHERE id = ?
+            """, (category, article_id))
+
+            classified_count += 1
+            category_counts[category] = category_counts.get(category, 0) + 1
+
+        db.conn.commit()
+
+        log.info(f"\n✅ Classified {classified_count} articles")
+        log.info("\nCategory distribution:")
+        for category, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True):
+            cat_info = classifier.get_category_info(category)
+            emoji = cat_info['emoji']
+            log.info(f"  {emoji} {category}: {count}")
+
+    log.info("=" * 60)
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Taraji AI - News Monitoring System")
@@ -135,6 +212,9 @@ def main():
     # Stats command
     subparsers.add_parser('stats', help='Show database statistics')
 
+    # Classify command
+    subparsers.add_parser('classify', help='Classify existing articles in database')
+
     args = parser.parse_args()
 
     # Execute command
@@ -144,6 +224,8 @@ def main():
         cmd_collect(test_mode=args.test)
     elif args.command == 'stats':
         cmd_stats()
+    elif args.command == 'classify':
+        cmd_classify()
     else:
         parser.print_help()
 

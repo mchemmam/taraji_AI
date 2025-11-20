@@ -31,6 +31,27 @@ GNEWS_COUNTRY = "TN"   # Tunisia - prioritizes Tunisian news sources
 GNEWS_PERIOD = "7d"    # Last 7 days (was "1h" - too short for testing)
 GNEWS_MAX_RESULTS = 100  # Max results per query
 
+# RSS Feed sources
+RSS_FEEDS = [
+    # Tunisian news (Arabic)
+    {
+        "name": "Nessma TV Sport (TN)",
+        "url": "https://www.nessma.tv/ar/rss/news/27",
+        "language": "ar"
+    },
+    # Tunisian news (French)
+    {
+        "name": "Nessma TV Sport (TN)",
+        "url": "https://www.nessma.tv/fr/rss/news/4",
+        "language": "fr"
+    },
+    {
+        "name": "Mosaique FM (TN)",
+        "url": "https://www.mosaiquefm.net/fr/rss",
+        "language": "fr"
+    },
+]
+
 # Twitter settings
 TWITTER_MAX_TWEETS = 100
 TWITTER_LOOKBACK_HOURS = 1
