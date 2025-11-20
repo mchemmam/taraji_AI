@@ -1,0 +1,39 @@
+{
+  "exact": {
+    "fr": [
+      "Espérance Sportive de Tunis",
+      "Esperance Sportive de Tunis",
+      "Espérance de Tunis",
+      "Esperance de Tunis",
+      "Espérance Tunis",
+      "Esperance Tunis",
+      "EST Tunis",
+      "Taraji"
+    ],
+    "ar": [
+      "الترجي الرياضي التونسي",
+      "الترجي التونسي",
+      "الترجي"
+    ],
+    "en": [
+      "Esperance Sportive de Tunis",
+      "Esperance of Tunis",
+      "Esperance Tunis",
+      "EST Tunis"
+    ]
+  },
+  "contextual": {
+    "EST": ["Tunis", "Tunisia", "Tunisie", "football", "CAF", "الترجي", "soccer"],
+    "Taraji": ["Tunisia", "Tunis", "Tunisie", "football", "الترجي", "soccer", "CAF"],
+    "Esperance": ["Tunisia", "Tunis", "Tunisie", "football", "CAF", "African", "Msakni", "transfer", "match"],
+    "Espérance": ["Tunisia", "Tunis", "Tunisie", "football", "CAF", "African", "Msakni", "transfer", "match"]
+  },
+  "negative": [
+    "Espérance de Zarzis",
+    "Esperance de Zarzis",
+    "Taraji P. Henson",
+    "Taraji Henson",
+    "Taraji P Henson",
+    "actress Taraji"
+  ]
+}
