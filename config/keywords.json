@@ -7,8 +7,7 @@
       "Esperance de Tunis",
       "Espérance Tunis",
       "Esperance Tunis",
-      "EST Tunis",
-      "Taraji"
+      "EST Tunis"
     ],
     "ar": [
       "الترجي الرياضي التونسي",
@@ -23,10 +22,10 @@
     ]
   },
   "contextual": {
-    "EST": ["Tunis", "Tunisia", "Tunisie", "football", "CAF", "الترجي", "soccer"],
-    "Taraji": ["Tunisia", "Tunis", "Tunisie", "football", "الترجي", "soccer", "CAF"],
-    "Esperance": ["Tunisia", "Tunis", "Tunisie", "football", "CAF", "African", "Msakni", "transfer", "match"],
-    "Espérance": ["Tunisia", "Tunis", "Tunisie", "football", "CAF", "African", "Msakni", "transfer", "match"]
+    "EST": ["Tunis", "Tunisia", "Tunisie", "football", "CAF", "الترجي", "soccer", "foot", "handball", "volleyball", "basket"],
+    "Taraji": ["Tunisia", "Tunis", "Tunisie", "football", "الترجي", "soccer", "CAF", "foot", "Sportive", "match", "victoire", "défaite", "handball", "volleyball", "basket"],
+    "Esperance": ["Tunisia", "Tunis", "Tunisie", "football", "CAF", "African", "Msakni", "transfer", "match", "Sportive", "handball", "volleyball", "basket"],
+    "Espérance": ["Tunisia", "Tunis", "Tunisie", "football", "CAF", "African", "Msakni", "transfer", "match", "Sportive", "handball", "volleyball", "basket"]
   },
   "negative": [
     "Espérance de Zarzis",
@@ -34,6 +33,33 @@
     "Taraji P. Henson",
     "Taraji Henson",
     "Taraji P Henson",
-    "actress Taraji"
+    "actress Taraji",
+    "Club Africain",
+    "Club africain",
+    "CA Bizertin",
+    "Étoile du Sahel",
+    "Etoile du Sahel",
+    "Étoile Sportive du Sahel",
+    "Etoile Sportive du Sahel",
+    "ESS Sahel",
+    "CSS Sfax",
+    "Club Sportif Sfaxien",
+    "US Monastir",
+    "US Tataouine",
+    "Ons Jabeur",
+    "Ons Jaber",
+    "أنس جابر",
+    "tennis",
+    "Tennis",
+    "WTA",
+    "ATP",
+    "Roland-Garros",
+    "Wimbledon",
+    "US Open",
+    "Australian Open",
+    "Grand Slam",
+    "Inter Miami",
+    "Lionel Messi",
+    "Cristiano Ronaldo"
   ]
 }

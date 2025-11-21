@@ -17,7 +17,7 @@ load_dotenv()
 from utils import log
 from storage import init_database, get_db
 from collectors import collect_google_news, collect_rss
-from processors import create_keyword_filter, detect_language, create_classifier
+from processors import create_keyword_filter, detect_language, create_classifier, create_summarizer, create_content_extractor
 
 
 def cmd_init():
@@ -34,11 +34,11 @@ def cmd_collect(test_mode=False):
     log.info("=" * 60)
 
     # Step 1: Collect from all sources
-    log.info("\n[1/6] Collecting from Google News...")
+    log.info("\n[1/8] Collecting from Google News...")
     google_articles = collect_google_news()
     log.info(f"Collected {len(google_articles)} articles from Google News")
 
-    log.info("\n[2/6] Collecting from RSS feeds...")
+    log.info("\n[2/8] Collecting from RSS feeds...")
     rss_articles = collect_rss()
     log.info(f"Collected {len(rss_articles)} articles from RSS feeds")
 
@@ -60,7 +60,7 @@ def cmd_collect(test_mode=False):
         return
 
     # Step 3: Filter by keywords
-    log.info("\n[3/6] Filtering by keywords...")
+    log.info("\n[3/8] Filtering by keywords...")
     keyword_filter = create_keyword_filter()
     filtered_articles = keyword_filter.filter_articles(articles)
 
@@ -70,22 +70,61 @@ def cmd_collect(test_mode=False):
 
     log.info(f"Found {len(filtered_articles)} relevant articles")
 
-    # Step 4: Detect languages
-    log.info("\n[4/6] Detecting languages...")
+    # Step 4: Extract full article content from URLs
+    log.info("\n[4/8] Extracting article content...")
+    extractor = create_content_extractor()
+    extracted_count = 0
     for article in filtered_articles:
-        text = f"{article.get('title', '')} {article.get('description', '')}"
+        url = article.get('url', '')
+        if url:
+            result = extractor.extract(url)
+            if result and result.get('text'):
+                article['content'] = result['text']
+                article['author'] = ', '.join(result.get('authors', []))
+                article['image_url'] = result.get('top_image', '')
+                extracted_count += 1
+
+    log.info(f"Extracted content from {extracted_count}/{len(filtered_articles)} articles")
+
+    # Step 5: Detect languages
+    log.info("\n[5/8] Detecting languages...")
+    for article in filtered_articles:
+        # Use extracted content or fallback to description
+        text = article.get('content', '') or f"{article.get('title', '')} {article.get('description', '')}"
         article['language'] = detect_language(text)
 
-    # Step 5: Classify articles
-    log.info("\n[5/6] Classifying articles...")
+    # Step 6: Classify articles
+    log.info("\n[6/8] Classifying articles...")
     classifier = create_classifier()
     for article in filtered_articles:
         title = article.get('title', '')
         content = article.get('content', '') or article.get('description', '') or ''
         article['category'] = classifier.classify(title, content)
 
-    # Step 6: Store in database
-    log.info("\n[6/6] Storing in database...")
+    # Step 7: Summarize articles
+    log.info("\n[7/8] Summarizing articles...")
+    summarizer = create_summarizer()
+    summarized_count = 0
+    for article in filtered_articles:
+        title = article.get('title', '')
+        # Use extracted content for summarization, fallback to description
+        content = article.get('content', '') or article.get('description', '') or ''
+        language = article.get('language', 'fr')
+
+        # Generate summary
+        summary = summarizer.summarize(title, content, language, max_sentences=2)
+        if summary:
+            article['summary'] = summary
+            summarized_count += 1
+
+    log.info(f"Summarized {summarized_count}/{len(filtered_articles)} articles")
+
+    # Show summarizer stats
+    stats = summarizer.get_stats()
+    log.info(f"  Gemini API: {stats['requests_today']}/{stats['daily_limit']} requests used today")
+
+    # Step 8: Store in database
+    log.info("\n[8/8] Storing in database...")
     stored_count = 0
     duplicate_count = 0
 

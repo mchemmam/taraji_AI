@@ -176,12 +176,43 @@ class Database:
                 article.get('likes')
             ))
 
+            article_id = cursor.lastrowid
+
+            # Insert matched keyword if present
+            matched_keyword = article.get('matched_keyword')
+            if matched_keyword:
+                self.insert_matched_keyword(article_id, matched_keyword)
+
             self.conn.commit()
-            return cursor.lastrowid
+            return article_id
 
         except sqlite3.IntegrityError:
             # Duplicate URL
             return None
+
+    def insert_matched_keyword(self, article_id: int, keyword: str):
+        """
+        Insert a matched keyword for an article
+
+        Args:
+            article_id: Article ID
+            keyword: The matched keyword (may include match type like "Taraji (contextual)")
+        """
+        cursor = self.conn.cursor()
+
+        # Extract match type if present (e.g., "Taraji (contextual)" -> "contextual")
+        match_type = "exact"
+        if "(" in keyword and ")" in keyword:
+            parts = keyword.rsplit("(", 1)
+            keyword = parts[0].strip()
+            match_type = parts[1].rstrip(")").strip()
+
+        cursor.execute("""
+            INSERT INTO keywords_matched (article_id, keyword, match_type)
+            VALUES (?, ?, ?)
+        """, (article_id, keyword, match_type))
+
+        # Note: Don't commit here - let the calling method handle the transaction
 
     def get_article_by_url(self, url: str) -> Optional[Dict]:
         """Get article by URL"""
