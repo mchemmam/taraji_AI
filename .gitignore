@@ -48,6 +48,9 @@ logs/*.log
 *.db-journal
 *.sqlite
 *.sqlite3
+# The main article database IS versioned - it's how scheduled GitHub Actions
+# runs persist state between executions
+!data/taraji_ai.db
 
 # Data
 data/raw/

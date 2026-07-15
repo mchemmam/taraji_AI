@@ -26,7 +26,17 @@ class Database:
         """Connect to database"""
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row  # Access columns by name
+        self._migrate()
         return self.conn
+
+    def _migrate(self):
+        """Apply lightweight schema migrations to existing databases"""
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(articles)")
+        columns = {row['name'] for row in cursor.fetchall()}
+        if columns and 'resolved_url' not in columns:
+            cursor.execute("ALTER TABLE articles ADD COLUMN resolved_url TEXT")
+            self.conn.commit()
 
     def close(self):
         """Close database connection"""
@@ -66,6 +76,7 @@ class Database:
                 category TEXT,
                 content TEXT,
                 summary TEXT,
+                resolved_url TEXT,
                 duplicate_of INTEGER,
                 is_published BOOLEAN DEFAULT 0,
 
@@ -157,9 +168,9 @@ class Database:
             cursor.execute("""
                 INSERT INTO articles (
                     url, title, source, source_type, published_date,
-                    language, category, content, summary,
+                    language, category, content, summary, resolved_url,
                     author, image_url, retweets, likes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 article.get('url'),
                 article.get('title'),
@@ -170,6 +181,7 @@ class Database:
                 article.get('category'),
                 article.get('content'),
                 article.get('summary'),
+                article.get('resolved_url'),
                 article.get('author'),
                 article.get('image_url'),
                 article.get('retweets'),
@@ -213,6 +225,57 @@ class Database:
         """, (article_id, keyword, match_type))
 
         # Note: Don't commit here - let the calling method handle the transaction
+
+    def get_existing_urls(self, urls: List[str]) -> set:
+        """Return the subset of given URLs already present in the database
+        (matched against both collected and resolved URLs)."""
+        existing = set()
+        cursor = self.conn.cursor()
+
+        chunk_size = 200
+        for i in range(0, len(urls), chunk_size):
+            chunk = urls[i:i + chunk_size]
+            placeholders = ','.join('?' * len(chunk))
+            cursor.execute(f"""
+                SELECT url, resolved_url FROM articles
+                WHERE url IN ({placeholders}) OR resolved_url IN ({placeholders})
+            """, chunk + chunk)
+            for row in cursor.fetchall():
+                existing.add(row['url'])
+                if row['resolved_url']:
+                    existing.add(row['resolved_url'])
+
+        return existing
+
+    def get_unpublished_articles(self, hours: int = 48, limit: int = 15) -> List[Dict]:
+        """Get recent articles not yet sent to any distribution channel"""
+        cursor = self.conn.cursor()
+        cutoff = datetime.now() - timedelta(hours=hours)
+
+        cursor.execute("""
+            SELECT * FROM articles
+            WHERE is_published = 0
+            AND collected_date >= ?
+            AND duplicate_of IS NULL
+            ORDER BY collected_date ASC
+            LIMIT ?
+        """, (cutoff, limit))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    def mark_published(self, article_id: int, channel: str,
+                       message_id: str = None, status: str = 'success'):
+        """Mark an article as published and log the distribution"""
+        cursor = self.conn.cursor()
+        if status == 'success':
+            cursor.execute(
+                "UPDATE articles SET is_published = 1 WHERE id = ?", (article_id,)
+            )
+        cursor.execute("""
+            INSERT INTO distribution_log (article_id, channel, message_id, status)
+            VALUES (?, ?, ?, ?)
+        """, (article_id, channel, message_id, status))
+        self.conn.commit()
 
     def get_article_by_url(self, url: str) -> Optional[Dict]:
         """Get article by URL"""

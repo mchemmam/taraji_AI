@@ -75,38 +75,42 @@ Edit `config/settings.py` for:
 # Initialize database
 python main.py init
 
-# Collect news
+# Collect news (collect + extract + AI process + store)
 python main.py collect
 
 # Collect in test mode (shows samples)
 python main.py collect --test
 
+# Send unpublished articles to Telegram
+python main.py distribute
+
+# Verify bot token and discover chat ids
+python main.py telegram-setup
+
 # Show statistics
 python main.py stats
 ```
 
-## Next Steps
+## Deployment
 
-See **PLAN.md** for the complete implementation roadmap.
-
-**Phase 1 (Current):** MVP - Basic collection and storage
-**Phase 2:** Add Twitter and RSS collectors
-**Phase 3:** AI summarization
-**Phase 4:** Telegram distribution
-**Phase 5:** Web dashboard
+The pipeline runs on GitHub Actions every 15 minutes
+(`.github/workflows/collect.yml`). State persists by committing
+`data/taraji_ai.db` back to the repository after each run that finds
+new articles. Secrets (`GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`) live in the repository's Actions secrets.
 
 ## Status
 
-✅ Project structure
-✅ Database schema
-✅ Google News collector
-✅ Keyword filtering (with contextual matching)
-✅ Language detection
-⏳ Twitter collector (Phase 2)
-⏳ RSS feeds (Phase 2)
-⏳ AI summarization (Phase 3)
-⏳ Telegram bot (Phase 4)
-⏳ Web dashboard (Phase 5)
+✅ Google News + RSS collectors
+✅ Keyword filtering (contextual matching + negative keywords)
+✅ Content extraction (Google News URL decoding + trafilatura)
+✅ Batched AI processing: relevance check, classification and
+   FR/AR summaries in one Gemini call per run (`gemini-2.5-flash`)
+✅ Scheduled collection via GitHub Actions
+✅ Telegram distributor (pending bot token configuration)
+⏳ Daily digest
+⏳ Web dashboard (static site on GitHub Pages)
+❌ Twitter/X (dropped - no viable free access in 2026)
 
 ## License
 

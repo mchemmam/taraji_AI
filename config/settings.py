@@ -28,7 +28,7 @@ ARTICLE_RETENTION_DAYS = 90  # Keep articles for 3 months
 # The actual language of results depends on your search queries (we use French, Arabic, English)
 GNEWS_LANGUAGE = "en"  # Interface language (doesn't restrict search results)
 GNEWS_COUNTRY = "TN"   # Tunisia - prioritizes Tunisian news sources
-GNEWS_PERIOD = "7d"    # Last 7 days (was "1h" - too short for testing)
+GNEWS_PERIOD = "1d"    # Last 24h - the scheduled runs only need fresh news
 GNEWS_MAX_RESULTS = 100  # Max results per query
 
 # RSS Feed sources
@@ -131,9 +131,9 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Gemini API settings
-GEMINI_MODEL = "gemini-pro"
-GEMINI_MAX_REQUESTS_PER_DAY = 1500
-GEMINI_REQUESTS_PER_MINUTE = 15
+# One batched request per collection run keeps usage well below the
+# free-tier daily quota (~250 requests/day for gemini-2.5-flash in 2026).
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # Telegram settings
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096

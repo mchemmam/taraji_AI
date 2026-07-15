@@ -1,28 +1,20 @@
 # Data Collection
-gnews==0.3.7
-feedparser==6.0.10
-requests==2.31.0
-beautifulsoup4==4.12.0
-newspaper3k==0.2.8
-trafilatura==1.6.2
+gnews>=0.4.2
+feedparser>=6.0.11
+requests>=2.32.0
+googlenewsdecoder>=0.1.7
+
+# Content extraction
+trafilatura>=2.0.0
 
 # NLP & Text Processing
 langdetect==1.0.9
-rapidfuzz==3.6.1
-scikit-learn==1.4.0
-python-dateutil==2.8.2
+rapidfuzz>=3.9.0
+python-dateutil>=2.9.0
 
-# Database
-# sqlite3 is built-in
+# AI/LLM (Gemini)
+google-genai>=1.16.0
 
 # Utilities
-python-dotenv==1.0.0
-loguru==0.7.2
-pytz==2024.1
-
-# AI/LLM
-google-generativeai>=0.8.0
-
-# Distribution (will add when implementing)
-# python-telegram-bot==20.7
-# streamlit==1.31.0
+python-dotenv>=1.0.1
+loguru>=0.7.2

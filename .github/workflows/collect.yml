@@ -1,0 +1,58 @@
+name: Collect news
+
+on:
+  schedule:
+    # Every 15 minutes, offset from :00 to avoid GitHub's top-of-the-hour
+    # congestion (scheduled runs are best-effort and queue behind load)
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+# Never run two collections at once - they would race on the database commit
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Collect news
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python main.py collect
+
+      - name: Distribute to Telegram
+        # No-ops gracefully while the Telegram secrets are not configured
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py distribute
+
+      - name: Commit updated database
+        run: |
+          git config user.name "taraji-ai-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/taraji_ai.db
+          if ! git diff --cached --quiet; then
+            git commit -m "data: update articles database"
+            # -X ours keeps our (newest) database if a concurrent push conflicts
+            git pull --rebase -X ours origin main
+            git push
+          else
+            echo "No new articles this run - nothing to commit"
+          fi
