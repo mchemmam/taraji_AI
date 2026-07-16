@@ -18,7 +18,7 @@ Each run does 7 steps, in order (see `main.py:cmd_collect`):
 2. **Keyword filter** — cheap text match before any network/AI cost. Rules live in `config/keywords.json`:
    - `exact`: club name variants per language ("Espérance de Tunis", "الترجي", etc.)
    - `contextual`: ambiguous terms like "EST" or "Taraji" only count if a football-related word is nearby
-   - `negative`: excludes lookalikes — other Tunisian clubs (Club Africain, Étoile du Sahel, CSS Sfax...), tennis player Ons Jabeur, actress Taraji P. Henson, and generic football noise (Messi, Ronaldo, Wimbledon) that would otherwise slip through fuzzy matching
+   - `negative`: excludes lookalikes — other Tunisian clubs (Club Africain, Étoile du Sahel, CSS Sfax, Espérance de Zarzis...), tennis player Ons Jabeur, actress Taraji P. Henson, and generic football noise (Messi, Ronaldo, Wimbledon) that would otherwise slip through fuzzy matching. **Gotcha (hit 2026-07-16):** negative entries need every language variant, not just French/English — "Espérance de Zarzis" was excluded in Latin script but not its Arabic name "الترجي الجرجيسي", so Arabic articles about that club matched the Arabic exact-keyword "الترجي" and slipped through for a while. When adding a new negative keyword, add the Arabic form too if one exists.
 3. **Dedup against DB** — drops URLs already stored, so nothing gets re-processed on every 15-min run.
 4. **Extract content** — fetches full article text from the URL (needed for a decent AI summary, not just the RSS blurb).
 5. **Dedup again** — after following redirects, catches the same story reached via two different URLs (e.g. Google News link + the RSS link).
