@@ -37,7 +37,7 @@ Today's date is {today}.
 
 For EACH numbered item below, return a JSON object with:
 - "id": the item number (integer, as given)
-- "relevant": true only if the item is genuinely about Espérance Sportive de Tunis (the Tunis football club). Items about Espérance de Zarzis, ES Sahel, the actress Taraji P. Henson, or other unrelated topics are NOT relevant.
+- "relevant": true only if the item is genuinely about Espérance Sportive de Tunis (the Tunis football club). Items about other Tunisian clubs that also contain "الترجي"/Espérance/Taraji in their name - e.g. Espérance de Zarzis (الترجي الجرجيسي), ES Sahel - the actress Taraji P. Henson, or other unrelated topics are NOT relevant.
 - "stale": true if the item rehashes an already-concluded event rather than reporting new information — e.g. a fixture/broadcast/replay listing page for a match played long ago, or an aggregator republishing an old story under a refreshed date. Judge this from the actual event described in the content (compare it against today's date), not from the item's claimed publish date - sources sometimes fake freshness. false if it's genuinely new information.
 - "category": one of "match", "transfer", "injury", "statement", "finance", "other"
 - "summary": a factual 2-3 sentence summary. Write it in Arabic if the article is in Arabic, otherwise in French. Focus on facts concerning Espérance Sportive de Tunis.
