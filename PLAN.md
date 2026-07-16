@@ -998,10 +998,12 @@ for _, row in df.iterrows():
 
 ### Facebook & Twitter (Future)
 
-**Facebook:**
-- Use Facebook Graph API
-- Post major news (transfers, match results)
-- Requires Facebook Page + App + Access Token
+**Facebook:** (parked idea, 2026-07-16 — not yet implemented)
+- New distributor module (`distributors/facebook_page.py`), same pattern as `telegram_bot.py`: plain HTTPS calls to the Graph API, no SDK
+- `POST /{page-id}/feed` with the article title/summary/link
+- Auth: a **long-lived Page Access Token**, generated once via Graph API Explorer (never expires in practice)
+- Since we'd only post to our own Page, **no Facebook App Review needed** — that's only required if other users' Pages are involved
+- Setup is heavier than Telegram's (need a Facebook Developer app + the token exchange flow), but posting itself is a single HTTP call, fits the existing GitHub Actions step
 
 **Twitter:**
 - Use Twitter API (free tier: 50 tweets/month)
