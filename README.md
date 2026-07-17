@@ -109,14 +109,14 @@ new articles. Secrets (`GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
 ✅ Google News + RSS collectors
 ✅ Keyword filtering (contextual matching + negative keywords)
 ✅ Content extraction (Google News URL decoding + trafilatura)
-✅ Batched AI processing: relevance check, classification and
-   FR/AR summaries in one Gemini call per run (`gemini-2.5-flash`)
+✅ Batched AI processing: relevance check, classification, FR+AR
+   summaries and duplicate detection in one Gemini call per run
 ✅ Scheduled collection via GitHub Actions (15-min cadence via cron-job.org)
-✅ Telegram distributor (live, posting to test chat)
+✅ Telegram distributor (live, posting to test chat; photo posts + bilingual)
+✅ Workflow failure alerts via Telegram
 ⏳ Switch to public channel @taraji_news (pending output validation)
-⏳ Daily digest
-⏳ Web dashboard (static site on GitHub Pages)
-❌ Twitter/X (dropped - no viable free access in 2026)
+
+Everything else planned: see `ROADMAP.md`.
 
 ## License
 

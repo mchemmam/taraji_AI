@@ -47,6 +47,8 @@ class Database:
         columns = {row['name'] for row in cursor.fetchall()}
         if columns and 'resolved_url' not in columns:
             cursor.execute("ALTER TABLE articles ADD COLUMN resolved_url TEXT")
+        if columns and 'summary_ar' not in columns:
+            cursor.execute("ALTER TABLE articles ADD COLUMN summary_ar TEXT")
         cursor.execute(self.REJECTED_URLS_SCHEMA)
         self.conn.commit()
 
@@ -88,6 +90,7 @@ class Database:
                 category TEXT,
                 content TEXT,
                 summary TEXT,
+                summary_ar TEXT,
                 resolved_url TEXT,
                 duplicate_of INTEGER,
                 is_published BOOLEAN DEFAULT 0,
@@ -182,9 +185,9 @@ class Database:
             cursor.execute("""
                 INSERT INTO articles (
                     url, title, source, source_type, published_date,
-                    language, category, content, summary, resolved_url,
-                    author, image_url, retweets, likes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    language, category, content, summary, summary_ar,
+                    resolved_url, author, image_url, retweets, likes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 article.get('url'),
                 article.get('title'),
@@ -195,6 +198,7 @@ class Database:
                 article.get('category'),
                 article.get('content'),
                 article.get('summary'),
+                article.get('summary_ar'),
                 article.get('resolved_url'),
                 article.get('author'),
                 article.get('image_url'),

@@ -57,3 +57,17 @@ jobs:
           else
             echo "No new articles this run - nothing to commit"
           fi
+
+      - name: Alert on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          # Falls back to the main chat; set the TELEGRAM_ALERT_CHAT_ID secret
+          # once TELEGRAM_CHAT_ID points at the public channel, so failure
+          # alerts stay private
+          ALERT_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID || secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s --max-time 20 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${ALERT_CHAT_ID}" \
+            -d text="⚠️ Taraji AI: collect workflow failed - ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            || true

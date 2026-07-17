@@ -21,6 +21,9 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 # Telegram allows ~20 messages/minute to the same chat
 SECONDS_BETWEEN_MESSAGES = 3
 
+# Photo captions have a much lower limit than text messages
+CAPTION_MAX_LENGTH = 1024
+
 
 class TelegramDistributor:
     """Send articles to a Telegram chat or channel"""
@@ -52,47 +55,80 @@ class TelegramDistributor:
 
     def send_article(self, article: Dict) -> Optional[str]:
         """
-        Post one article to the configured chat.
+        Post one article to the configured chat - as a photo with caption
+        when the article has an image, as a plain text message otherwise
+        (or when Telegram cannot fetch the image).
 
         Returns the Telegram message id on success, None on failure.
         """
-        message = self.format_article(article)
+        image_url = (article.get('image_url') or '').strip()
+        if image_url.startswith('http'):
+            result = self._call('sendPhoto', {
+                'chat_id': self.chat_id,
+                'photo': image_url,
+                'caption': self.format_article(article, limit=CAPTION_MAX_LENGTH),
+                'parse_mode': 'HTML',
+            })
+            if result:
+                return str(result['message_id'])
+            log.warning("sendPhoto failed - falling back to text-only message")
+
         result = self._call('sendMessage', {
             'chat_id': self.chat_id,
-            'text': message,
+            'text': self.format_article(article),
             'parse_mode': 'HTML',
             'disable_web_page_preview': False,
         })
         return str(result['message_id']) if result else None
 
-    def format_article(self, article: Dict) -> str:
-        """Format an article as a Telegram HTML message"""
+    def format_article(self, article: Dict, limit: int = None) -> str:
+        """Format an article as a Telegram HTML message.
+
+        Shows both the French and Arabic summaries when available. When the
+        result exceeds `limit` (photo captions allow only 1024 chars), the
+        summaries are trimmed first so the footer and link always survive.
+        """
+        limit = limit or settings.TELEGRAM_MAX_MESSAGE_LENGTH
         category = article.get('category') or 'other'
         cat_info = settings.CATEGORIES.get(category, settings.CATEGORIES['other'])
         emoji = cat_info['emoji']
 
-        language = article.get('language') or 'fr'
-        cat_name = cat_info.get('name_ar') if language == 'ar' else cat_info.get('name_fr')
-
-        title = html.escape(article.get('title') or '')
-        summary = html.escape(article.get('summary') or '')
+        raw_title = article.get('title') or ''
+        title = html.escape(raw_title)
         source = html.escape(article.get('source') or '')
         link = article.get('resolved_url') or article.get('url') or ''
 
-        lines = [f"{emoji} <b>{title}</b>"]
-        if summary and summary.strip() not in title:
-            lines.append("")
-            lines.append(summary)
-        lines.append("")
-        footer = f"📰 {source} | {cat_name}"
-        lines.append(footer)
-        if link:
-            lines.append(f'<a href="{html.escape(link)}">Lire l\'article</a>')
+        summaries = []
+        for key in ('summary', 'summary_ar'):
+            text = (article.get(key) or '').strip()
+            if text and text not in raw_title:
+                summaries.append(html.escape(text))
 
-        message = "\n".join(lines)
-        # Telegram hard limit is 4096 chars
-        if len(message) > settings.TELEGRAM_MAX_MESSAGE_LENGTH:
-            message = message[:settings.TELEGRAM_MAX_MESSAGE_LENGTH - 3] + '...'
+        def build(summary_blocks):
+            lines = [f"{emoji} <b>{title}</b>"]
+            for block in summary_blocks:
+                lines.append("")
+                lines.append(block)
+            lines.append("")
+            lines.append(f"📰 {source} | {cat_info['name_fr']} • {cat_info['name_ar']}")
+            if link:
+                lines.append(f'<a href="{html.escape(link)}">Lire l\'article</a>')
+            return "\n".join(lines)
+
+        message = build(summaries)
+        while len(message) > limit and summaries:
+            excess = len(message) - limit
+            last = summaries[-1]
+            if len(last) > excess + 20:
+                summaries[-1] = last[:len(last) - excess - 1].rsplit(' ', 1)[0] + '…'
+            else:
+                summaries.pop()
+            message = build(summaries)
+
+        if len(message) > limit:
+            # Pathological title; if the cut breaks the HTML, the send falls
+            # back to a plain text message with the full 4096-char budget
+            message = message[:limit - 1] + '…'
         return message
 
     def distribute(self, db) -> Dict:

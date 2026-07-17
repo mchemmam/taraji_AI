@@ -127,10 +127,14 @@ def cmd_collect(test_mode=False):
         article['language'] = detect_language(text)
 
     # Step 7: AI processing - one batched Gemini call for relevance check,
-    # classification and summaries (rule-based fallback inside)
-    log.info("\n[7/7] AI processing (relevance + category + summary)...")
+    # classification, FR/AR summaries and duplicate detection (rule-based
+    # fallback inside). Recent titles let the model reject re-reports of
+    # stories we already covered via another source or language.
+    log.info("\n[7/7] AI processing (relevance + category + summary + dedup)...")
+    with get_db() as db:
+        recent_titles = [a['title'] for a in db.get_recent_articles(hours=48, limit=40)]
     ai = create_ai_processor()
-    new_articles, rejected = ai.process_articles(new_articles)
+    new_articles, rejected = ai.process_articles(new_articles, recent_titles=recent_titles)
     stats = ai.get_stats()
     log.info(f"  Gemini requests this run: {stats['requests_made']} (available: {stats['gemini_available']})")
 

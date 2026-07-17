@@ -27,7 +27,7 @@ Each run does 7 steps, in order (see `main.py:cmd_collect`):
 4. **Extract content** — fetches full article text from the URL (needed for a decent AI summary, not just the RSS blurb).
 5. **Dedup again** — after following redirects, catches the same story reached via two different URLs (e.g. Google News link + the RSS link).
 6. **Detect language** — fr / ar / en, stored per article.
-7. **AI processing** — one **batched** Gemini call (`gemini-2.5-flash`) per run does relevance double-check, staleness check, categorization, and summary together. Batching everything into a single request is deliberate: the free tier is roughly 250 requests/day, and per-article calls would burn through that fast. Falls back to rule-based classification if Gemini is unavailable. Articles the AI rejects (irrelevant or stale) are remembered in the `rejected_urls` table so they aren't re-extracted and re-judged on every subsequent run.
+7. **AI processing** — one **batched** Gemini call (`gemini-2.5-flash`) per run does everything together: relevance double-check, staleness check, categorization, **French + Arabic summaries** for every article, and **duplicate detection** — both within the batch (same story via two sources/languages) and against the titles of the last 48h of stored articles (re-reports of stories already covered). Batching everything into a single request is deliberate: the free tier is roughly 250 requests/day, and per-article calls would burn through that fast. Falls back to rule-based classification if Gemini is unavailable. Articles the AI rejects (reasons: `irrelevant`, `stale`, `duplicate`, `already_covered`) are remembered in the `rejected_urls` table so they aren't re-extracted and re-judged on every subsequent run.
 
 Then everything new gets stored in `data/taraji_ai.db` (SQLite). Runs that store something also **prune**: full article text older than 30 days (`CONTENT_RETENTION_DAYS`) is blanked — the text is only needed once, to generate the summary — and rejected URLs older than 30 days are dropped. Every article row (title, summary, category, URL, dates) is kept forever for the future archive/dashboard; this just caps the growth of the git-committed database. Deliberately no `VACUUM`: rewriting the whole file would defeat git's delta compression.
 
@@ -38,7 +38,7 @@ Defined in `config/settings.py` (`CATEGORIES`): ⚽ match, 💼 transfer, 🏥 i
 
 ## Distribution (`python main.py distribute`)
 
-Sends every unpublished article to a Telegram chat via `distributors/telegram_bot.py` — plain HTTPS calls to the Bot API, no SDK. One message per article (throttled to 1 every 3 seconds, under Telegram's ~20/min limit), formatted with the category emoji, title, summary, source, and a link.
+Sends every unpublished article to a Telegram chat via `distributors/telegram_bot.py` — plain HTTPS calls to the Bot API, no SDK. One message per article (throttled to 1 every 3 seconds, under Telegram's ~20/min limit), formatted with the category emoji, title, **both FR and AR summaries**, source, and a link. Articles with an extracted image go out as a **photo post** with that text as the caption (captions max 1024 chars — summaries get trimmed to fit); if Telegram can't fetch the image, the message falls back to plain text automatically.
 
 - **Bot**: `@taraji_ai_news_bot`, created via @BotFather (2026-07-16).
 - **Target chat**: currently your private test chat (`TELEGRAM_CHAT_ID`) — deliberately *not* the public channel yet, so output quality gets validated before anyone else sees it.
@@ -77,6 +77,7 @@ Runs with `event=workflow_dispatch` are the cron-job.org pings; `event=schedule`
 | `GEMINI_API_KEY` | ✅ | repo secret | AI summarization/classification |
 | `TELEGRAM_BOT_TOKEN` | ✅ | repo secret | Bot auth for posting |
 | `TELEGRAM_CHAT_ID` | ✅ | repo secret | Where messages get sent (test chat) |
+| `TELEGRAM_ALERT_CHAT_ID` | — | repo secret (optional) | Where workflow-failure alerts go; falls back to `TELEGRAM_CHAT_ID`. Set it when the main chat becomes the public channel |
 | cron-job.org's GitHub PAT | — | lives only in cron-job.org's job config | Triggers `workflow_dispatch` every 15 min |
 
 Check what's set on GitHub with `gh secret list --repo mchemmam/taraji_AI`.
@@ -108,7 +109,4 @@ $0/month. Google News + RSS are free with no key. Gemini free tier (~250 req/day
 
 ## Not built yet / open threads
 
-- **Daily digest** (grouped summary message) and a **GitHub Pages dashboard** for browsing the archive — designed in `PLAN.md` but not implemented.
-- **Facebook auto-posting** — parked as a concrete plan in `PLAN.md` ("Facebook & Twitter (Future)" section): Graph API, long-lived Page token, no App Review needed since it's our own Page.
-- **Twitter/X** — dropped (2026-07-15): official free API gone, third-party APIs cost money.
-- **Switch to the public `@taraji_news` channel** — pending validation of test-chat output quality.
+See `ROADMAP.md` for the full parked-ideas list (importance ranking, daily digest, Pages dashboard, Facebook, match-day features...). Nearest milestone: **switch to the public `@taraji_news` channel** once test-chat output quality is validated — swap `TELEGRAM_CHAT_ID`, and set `TELEGRAM_ALERT_CHAT_ID` to the private chat at the same time.
