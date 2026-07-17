@@ -22,6 +22,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Check out the branch tip at job start, not the SHA snapshotted at
+          # run creation - a queued run's snapshot predates the previous run's
+          # database push, which re-sends already-published articles
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
