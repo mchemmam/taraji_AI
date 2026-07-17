@@ -2,6 +2,7 @@
 """
 Taraji AI - Main orchestrator script
 """
+import re
 import sys
 import argparse
 from pathlib import Path
@@ -45,6 +46,37 @@ def _dedupe_by_url(articles, key='url'):
     return unique
 
 
+# Whole-word patterns for the blocked publishers (see settings.SOURCE_BLOCKLIST).
+# Word boundaries keep "msn" from matching a random substring inside a base64
+# Google News link while still catching the "MSN" publisher and msn.com.
+_BLOCKED_SOURCE_PATTERNS = [
+    re.compile(rf'\b{re.escape(name.lower())}\b')
+    for name in settings.SOURCE_BLOCKLIST
+]
+
+
+def _is_blocked_source(article):
+    """True if the article's publisher or URL matches SOURCE_BLOCKLIST."""
+    haystack = ' '.join(filter(None, [
+        article.get('source') or '',
+        article.get('url') or '',
+        article.get('resolved_url') or '',
+    ])).lower()
+    return any(pattern.search(haystack) for pattern in _BLOCKED_SOURCE_PATTERNS)
+
+
+def _drop_blocked_sources(articles):
+    """Remove blocked-publisher articles, logging how many were dropped."""
+    if not _BLOCKED_SOURCE_PATTERNS:
+        return articles
+    kept = [a for a in articles if not _is_blocked_source(a)]
+    dropped = len(articles) - len(kept)
+    if dropped:
+        log.info(f"Dropped {dropped} article(s) from blocked sources "
+                 f"({', '.join(settings.SOURCE_BLOCKLIST)})")
+    return kept
+
+
 def cmd_collect(test_mode=False):
     """Run news collection"""
     log.info("=" * 60)
@@ -62,6 +94,11 @@ def cmd_collect(test_mode=False):
 
     articles = _dedupe_by_url(google_articles + rss_articles)
     log.info(f"Total: {len(articles)} unique articles")
+
+    # Drop blocked publishers (e.g. MSN) before any network/AI work - they
+    # republish stale stories under refreshed dates. Matched on publisher name
+    # here; a second pass after URL resolution catches domain-level republishes.
+    articles = _drop_blocked_sources(articles)
 
     if not articles:
         log.warning("No articles collected!")
@@ -106,6 +143,13 @@ def cmd_collect(test_mode=False):
         else:
             article['resolved_url'] = extractor.resolve_url(url)
     log.info(f"Extracted content from {extracted_count}/{len(new_articles)} articles")
+
+    # Blocked publishers can hide behind a Google News attribution and only
+    # reveal themselves (msn.com) once the redirect is resolved - drop those too
+    new_articles = _drop_blocked_sources(new_articles)
+    if not new_articles:
+        log.info("All new articles were from blocked sources.")
+        return
 
     # Same story can arrive via different collected URLs (Google News + RSS);
     # after resolution we can catch those duplicates

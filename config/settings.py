@@ -26,6 +26,16 @@ GNEWS_COUNTRY = "TN"   # Tunisia - prioritizes Tunisian news sources
 GNEWS_PERIOD = "1d"    # Last 24h - the scheduled runs only need fresh news
 GNEWS_MAX_RESULTS = 100  # Max results per query
 
+# Publishers to drop outright, whatever the story. Matched case-insensitively
+# as whole words against the article's publisher name and its URLs, so "msn"
+# catches the "MSN" publisher and the msn.com domain but not a stray "msn"
+# substring inside a base64 Google News link. Aggregators like MSN routinely
+# republish long-concluded stories under a refreshed date, defeating the
+# 1-day freshness window - so we never ingest them in the first place.
+SOURCE_BLOCKLIST = [
+    "MSN",
+]
+
 # RSS feed sources - this list is what the RSS collector actually fetches;
 # add/remove feeds here
 RSS_FEEDS = [
