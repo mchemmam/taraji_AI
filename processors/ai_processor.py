@@ -13,7 +13,7 @@ import json
 import os
 import time
 from datetime import date
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from utils import log
 from config import settings
@@ -69,7 +69,7 @@ class AIProcessor:
             except Exception as e:
                 log.error(f"Failed to initialize Gemini client: {e}")
 
-    def process_articles(self, articles: List[Dict]) -> List[Dict]:
+    def process_articles(self, articles: List[Dict]) -> Tuple[List[Dict], List[Tuple[Dict, str]]]:
         """
         Enrich articles in place with 'relevant', 'category' and 'summary'.
 
@@ -77,10 +77,11 @@ class AIProcessor:
         to the rule-based classifier and extractive summaries, and marks every
         article relevant (the keyword filter already ran upstream).
 
-        Returns the same list, with irrelevant articles filtered out.
+        Returns (kept_articles, rejected) where rejected is a list of
+        (article, reason) pairs the AI judged irrelevant or stale.
         """
         if not articles:
-            return []
+            return [], []
 
         results = self._gemini_batch(articles) if self.client else None
 
@@ -90,10 +91,18 @@ class AIProcessor:
                 article['relevant'] = True
                 article['category'] = self._fallback_classify(article)
                 article['summary'] = self._extractive_summary(article)
-            return articles
+            return articles, []
 
-        by_id = {r['id']: r for r in results}
+        by_id = {}
+        for r in results:
+            if isinstance(r, dict):
+                try:
+                    by_id[int(r.get('id'))] = r
+                except (TypeError, ValueError):
+                    continue
+
         kept = []
+        rejected = []
         for i, article in enumerate(articles, 1):
             r = by_id.get(i)
             if r is None:
@@ -106,10 +115,12 @@ class AIProcessor:
 
             if not r.get('relevant', True):
                 log.info(f"🚫 AI marked irrelevant: {article.get('title', '')[:70]}")
+                rejected.append((article, 'irrelevant'))
                 continue
 
             if r.get('stale', False):
                 log.info(f"🕰️  AI marked stale/rehashed: {article.get('title', '')[:70]}")
+                rejected.append((article, 'stale'))
                 continue
 
             category = r.get('category', 'other')
@@ -122,7 +133,7 @@ class AIProcessor:
             kept.append(article)
 
         log.info(f"AI processing: {len(articles)} articles → {len(kept)} relevant")
-        return kept
+        return kept, rejected
 
     def _gemini_batch(self, articles: List[Dict]) -> Optional[List[Dict]]:
         """Make one Gemini call for all articles. Returns parsed list or None."""

@@ -50,8 +50,9 @@ jobs:
           git add data/taraji_ai.db
           if ! git diff --cached --quiet; then
             git commit -m "data: update articles database"
-            # -X ours keeps our (newest) database if a concurrent push conflicts
-            git pull --rebase -X ours origin main
+            # During a rebase "theirs" is the commit being replayed (ours), so
+            # -X theirs keeps our newest database if a concurrent push conflicts
+            git pull --rebase -X theirs origin main
             git push
           else
             echo "No new articles this run - nothing to commit"

@@ -18,6 +18,7 @@ class KeywordFilter:
 
         self.keywords = load_json_config(keywords_path)
         self.exact_keywords = self.keywords.get('exact', {})
+        self.ambiguous_keywords = self.keywords.get('exact_ambiguous', {})
         self.contextual_keywords = self.keywords.get('contextual', {})
         self.negative_keywords = self.keywords.get('negative', [])
 
@@ -28,7 +29,28 @@ class KeywordFilter:
         all_kw = []
         for lang_kw in self.exact_keywords.values():
             all_kw.extend(lang_kw)
+        for lang_kw in self.ambiguous_keywords.values():
+            all_kw.extend(lang_kw)
         return all_kw
+
+    @staticmethod
+    def _match_exact(keywords_by_lang: dict, text_lower: str,
+                     language: str) -> Optional[str]:
+        """Return the first keyword found in the text.
+
+        Checks only the given language's keywords when known, all languages
+        otherwise.
+        """
+        if language == 'unknown':
+            languages = list(keywords_by_lang.keys())
+        else:
+            languages = [language] if language in keywords_by_lang else []
+
+        for lang in languages:
+            for keyword in keywords_by_lang[lang]:
+                if keyword.lower() in text_lower:
+                    return keyword
+        return None
 
     def matches(self, text: str, language: str = 'unknown') -> Tuple[bool, Optional[str]]:
         """
@@ -46,26 +68,27 @@ class KeywordFilter:
 
         text_lower = text.lower()
 
-        # Step 1: Check negative keywords first (highest priority)
+        # Step 1: Unambiguous club names win outright - negative keywords must
+        # not veto them, or derby coverage ("Espérance de Tunis bat le Club
+        # Africain") gets dropped. False positives that slip through here are
+        # caught by the AI relevance check downstream.
+        matched = self._match_exact(self.exact_keywords, text_lower, language)
+        if matched:
+            log.info(f"✅ Matched exact keyword: {matched}")
+            return True, matched
+
+        # Step 2: Negative keywords veto all weaker match types below
         for neg_keyword in self.negative_keywords:
             if neg_keyword.lower() in text_lower:
                 log.info(f"❌ Filtered out by negative keyword: {neg_keyword}")
                 return False, None
 
-        # Step 2: Check exact matches for the specific language
-        if language != 'unknown' and language in self.exact_keywords:
-            for keyword in self.exact_keywords[language]:
-                if keyword.lower() in text_lower:
-                    log.info(f"✅ Matched exact keyword [{language}]: {keyword}")
-                    return True, keyword
-
-        # Step 3: Check all languages if language is unknown
-        if language == 'unknown':
-            for lang, keywords in self.exact_keywords.items():
-                for keyword in keywords:
-                    if keyword.lower() in text_lower:
-                        log.info(f"✅ Matched exact keyword [{lang}]: {keyword}")
-                        return True, keyword
+        # Step 3: Ambiguous short names (bare "الترجي" is also a substring of
+        # "الترجي الجرجيسي"/Zarzis) - only valid once negatives had their say
+        matched = self._match_exact(self.ambiguous_keywords, text_lower, language)
+        if matched:
+            log.info(f"✅ Matched exact keyword: {matched}")
+            return True, matched
 
         # Step 4: Check contextual keywords (require context words nearby)
         for keyword, context_words in self.contextual_keywords.items():

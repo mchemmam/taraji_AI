@@ -44,28 +44,33 @@ python main.py stats
 
 ```
 taraji_AI/
-├── collectors/        # Data collection modules
-├── processors/        # Processing (filtering, language detection)
-├── storage/          # Database operations
-├── config/           # Configuration files
-├── utils/            # Utilities and logging
-├── data/             # Data storage (database, raw files)
-├── logs/             # Application logs
-└── main.py           # Main entry point
+├── collectors/        # Data collection (Google News, RSS)
+├── processors/        # Keyword filter, extraction, language detection, AI
+├── storage/           # Database operations
+├── distributors/      # Telegram bot
+├── config/            # Configuration (settings.py, keywords.json)
+├── utils/             # Utilities and logging
+├── scripts/           # Dev utilities (inspect/view articles, keyword checks)
+├── data/              # Data storage (database, raw files)
+├── logs/              # Application logs
+└── main.py            # Main entry point
 ```
 
 ## Configuration
 
 ### Keywords
 Edit `config/keywords.json` to add/modify club keywords:
-- `exact`: Direct matches (with language variants)
+- `exact`: Unambiguous club names — always match, immune to negative keywords
+- `exact_ambiguous`: Short names shared with lookalikes (bare "الترجي") — negative keywords can veto these
 - `contextual`: Requires context words (like "EST" + "Tunis")
 - `negative`: Exclusions (other clubs, Taraji P. Henson, etc.)
 
+Test changes with `python scripts/check_keywords.py "some headline"`.
+
 ### Settings
 Edit `config/settings.py` for:
-- Collection intervals
-- API limits
+- RSS feed sources (`RSS_FEEDS`)
+- Google News query options
 - Database paths
 - Log levels
 
@@ -106,8 +111,9 @@ new articles. Secrets (`GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
 ✅ Content extraction (Google News URL decoding + trafilatura)
 ✅ Batched AI processing: relevance check, classification and
    FR/AR summaries in one Gemini call per run (`gemini-2.5-flash`)
-✅ Scheduled collection via GitHub Actions
-✅ Telegram distributor (pending bot token configuration)
+✅ Scheduled collection via GitHub Actions (15-min cadence via cron-job.org)
+✅ Telegram distributor (live, posting to test chat)
+⏳ Switch to public channel @taraji_news (pending output validation)
 ⏳ Daily digest
 ⏳ Web dashboard (static site on GitHub Pages)
 ❌ Twitter/X (dropped - no viable free access in 2026)

@@ -18,11 +18,6 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = LOGS_DIR / "app.log"
 ERROR_LOG_FILE = LOGS_DIR / "errors.log"
 
-# Collection settings
-COLLECTION_INTERVAL_MINUTES = 30
-MAX_ARTICLES_PER_SOURCE = 100
-ARTICLE_RETENTION_DAYS = 90  # Keep articles for 3 months
-
 # Google News settings
 # Note: These settings affect ranking/prioritization, NOT which languages are searched
 # The actual language of results depends on your search queries (we use French, Arabic, English)
@@ -31,7 +26,8 @@ GNEWS_COUNTRY = "TN"   # Tunisia - prioritizes Tunisian news sources
 GNEWS_PERIOD = "1d"    # Last 24h - the scheduled runs only need fresh news
 GNEWS_MAX_RESULTS = 100  # Max results per query
 
-# RSS Feed sources
+# RSS feed sources - this list is what the RSS collector actually fetches;
+# add/remove feeds here
 RSS_FEEDS = [
     # Tunisian news (Arabic)
     {
@@ -52,17 +48,14 @@ RSS_FEEDS = [
     },
 ]
 
-# Twitter settings
-TWITTER_MAX_TWEETS = 100
-TWITTER_LOOKBACK_HOURS = 1
-
 # Content extraction
 EXTRACTION_TIMEOUT = 10  # seconds
-MIN_ARTICLE_LENGTH = 100  # characters
+MIN_ARTICLE_LENGTH = 100  # characters - shorter extractions are discarded
 
-# Deduplication
-SIMILARITY_THRESHOLD = 0.85  # 85% similarity = duplicate
-TIME_WINDOW_HOURS = 24       # Consider articles within 24h for deduplication
+# Full article text is blanked after this many days (summaries and metadata
+# are kept forever) to cap the growth of the git-committed database. Note:
+# no VACUUM - rewriting the whole file would defeat git's delta compression.
+CONTENT_RETENTION_DAYS = 30
 
 # Classification categories
 CATEGORIES = {
@@ -127,7 +120,6 @@ CATEGORIES = {
 
 # API Keys (loaded from environment variables)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Gemini API settings
@@ -137,12 +129,3 @@ GEMINI_MODEL = "gemini-2.5-flash"
 
 # Telegram settings
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-DIGEST_TIME_UTC = "08:00"  # 8 AM UTC
-
-# Error notifications
-NOTIFY_ON_ERROR = True
-ALERT_THRESHOLD_NO_ARTICLES = 5  # Alert if less than 5 articles collected
-
-# Database cleanup
-CLEANUP_OLDER_THAN_DAYS = 90
-VACUUM_DATABASE = True

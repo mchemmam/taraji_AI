@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """View articles and summaries from the database"""
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from storage import get_db
 from utils import log

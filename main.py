@@ -15,12 +15,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from utils import log
+from config import settings
 from storage import init_database, get_db
 from collectors import collect_google_news, collect_rss
 from processors import (
     create_keyword_filter,
     detect_language,
-    create_classifier,
     create_ai_processor,
     create_content_extractor,
 )
@@ -130,9 +130,18 @@ def cmd_collect(test_mode=False):
     # classification and summaries (rule-based fallback inside)
     log.info("\n[7/7] AI processing (relevance + category + summary)...")
     ai = create_ai_processor()
-    new_articles = ai.process_articles(new_articles)
+    new_articles, rejected = ai.process_articles(new_articles)
     stats = ai.get_stats()
     log.info(f"  Gemini requests this run: {stats['requests_made']} (available: {stats['gemini_available']})")
+
+    # Remember rejected URLs so they are not re-extracted and re-judged
+    # on every subsequent 15-minute run
+    if rejected:
+        with get_db() as db:
+            for article, reason in rejected:
+                db.insert_rejected_url(
+                    article['url'], article.get('resolved_url'), reason
+                )
 
     # Store in database
     log.info("\nStoring in database...")
@@ -145,6 +154,14 @@ def cmd_collect(test_mode=False):
                 stored_count += 1
             else:
                 duplicate_count += 1
+
+        # Prune bulky old data while this run is committing a DB change
+        # anyway - article text is only needed until its summary exists
+        if stored_count:
+            pruned, dropped = db.prune_old_data(settings.CONTENT_RETENTION_DAYS)
+            if pruned or dropped:
+                log.info(f"Pruned content from {pruned} old articles, "
+                         f"dropped {dropped} old rejected URLs")
 
     log.info("\n" + "=" * 60)
     log.info("Collection Summary:")
@@ -238,56 +255,6 @@ def cmd_stats():
     log.info("=" * 60)
 
 
-def cmd_classify():
-    """Classify existing articles in database"""
-    log.info("=" * 60)
-    log.info("Classifying Existing Articles")
-    log.info("=" * 60)
-
-    classifier = create_classifier()
-
-    with get_db() as db:
-        cursor = db.conn.cursor()
-        cursor.execute("SELECT id, title, content, summary FROM articles")
-        articles = cursor.fetchall()
-
-        if not articles:
-            log.warning("No articles found in database!")
-            return
-
-        log.info(f"\nFound {len(articles)} articles to classify...")
-
-        classified_count = 0
-        category_counts = {}
-
-        for article in articles:
-            article_id = article['id']
-            title = article['title']
-            content = article['content'] or article['summary'] or ''
-
-            category = classifier.classify(title, content)
-
-            cursor.execute("""
-                UPDATE articles
-                SET category = ?
-                WHERE id = ?
-            """, (category, article_id))
-
-            classified_count += 1
-            category_counts[category] = category_counts.get(category, 0) + 1
-
-        db.conn.commit()
-
-        log.info(f"\n✅ Classified {classified_count} articles")
-        log.info("\nCategory distribution:")
-        for category, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True):
-            cat_info = classifier.get_category_info(category)
-            emoji = cat_info['emoji']
-            log.info(f"  {emoji} {category}: {count}")
-
-    log.info("=" * 60)
-
-
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Taraji AI - News Monitoring System")
@@ -302,7 +269,6 @@ def main():
     subparsers.add_parser('distribute', help='Send unpublished articles to Telegram')
     subparsers.add_parser('telegram-setup', help='Verify bot token and list chat IDs')
     subparsers.add_parser('stats', help='Show database statistics')
-    subparsers.add_parser('classify', help='Classify existing articles in database')
 
     args = parser.parse_args()
 
@@ -316,8 +282,6 @@ def main():
         cmd_telegram_setup()
     elif args.command == 'stats':
         cmd_stats()
-    elif args.command == 'classify':
-        cmd_classify()
     else:
         parser.print_help()
 

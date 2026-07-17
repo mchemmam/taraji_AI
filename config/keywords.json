@@ -11,14 +11,18 @@
     ],
     "ar": [
       "الترجي الرياضي التونسي",
-      "الترجي التونسي",
-      "الترجي"
+      "الترجي التونسي"
     ],
     "en": [
       "Esperance Sportive de Tunis",
       "Esperance of Tunis",
       "Esperance Tunis",
       "EST Tunis"
+    ]
+  },
+  "exact_ambiguous": {
+    "ar": [
+      "الترجي"
     ]
   },
   "contextual": {

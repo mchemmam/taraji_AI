@@ -3,8 +3,8 @@
 Interactive article inspector - check individual articles for relevance
 """
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from storage import get_db
 from utils import log
@@ -77,8 +77,8 @@ def list_recent(limit=20):
             lang_emoji = {"ar": "🇹🇳", "fr": "🇫🇷", "en": "🇬🇧"}.get(article['language'], "🌍")
             print(f"{article['id']:3d}. {lang_emoji} [{article['category']:8s}] {article['title'][:60]}")
         print("=" * 80)
-        print(f"\nTo inspect an article: python inspect_articles.py <id>")
-        print(f"Example: python inspect_articles.py 191")
+        print(f"\nTo inspect an article: python scripts/inspect_articles.py <id>")
+        print(f"Example: python scripts/inspect_articles.py 191")
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
@@ -87,6 +87,6 @@ if __name__ == '__main__':
             show_article(article_id)
         except ValueError:
             print(f"❌ Invalid article ID: {sys.argv[1]}")
-            print("Usage: python inspect_articles.py <article_id>")
+            print("Usage: python scripts/inspect_articles.py <article_id>")
     else:
         list_recent()

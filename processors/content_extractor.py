@@ -11,13 +11,14 @@ import trafilatura
 from googlenewsdecoder import gnewsdecoder
 
 from utils import log
+from config import settings
 
 
 class ContentExtractor:
     """Extract full article content from URLs"""
 
-    def __init__(self, timeout: int = 10):
-        self.timeout = timeout
+    def __init__(self, timeout: int = None):
+        self.timeout = timeout or settings.EXTRACTION_TIMEOUT
         self.user_agent = (
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
@@ -75,7 +76,7 @@ class ContentExtractor:
                 include_tables=False,
             )
 
-            if not text or len(text) < 100:
+            if not text or len(text) < settings.MIN_ARTICLE_LENGTH:
                 return None
 
             metadata = trafilatura.extract_metadata(response.text)

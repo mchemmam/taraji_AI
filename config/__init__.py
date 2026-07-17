@@ -1,13 +1,6 @@
 """
 Configuration package for Taraji AI
 """
-from .settings import *
+from . import settings
 
-__all__ = [
-    'BASE_DIR',
-    'DATA_DIR',
-    'LOGS_DIR',
-    'DATABASE_PATH',
-    'CATEGORIES',
-    'SIMILARITY_THRESHOLD',
-]
+__all__ = ['settings']

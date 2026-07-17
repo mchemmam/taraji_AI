@@ -13,6 +13,17 @@ from config import settings
 class Database:
     """SQLite database manager for Taraji AI"""
 
+    # URLs the AI judged irrelevant/stale - remembered so the same article
+    # is not re-extracted and re-judged on every scheduled run
+    REJECTED_URLS_SCHEMA = """
+        CREATE TABLE IF NOT EXISTS rejected_urls (
+            url TEXT PRIMARY KEY,
+            resolved_url TEXT,
+            reason TEXT,
+            rejected_date DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
     def __init__(self, db_path: str = None):
         self.db_path = db_path or settings.DATABASE_PATH
         self.conn = None
@@ -36,7 +47,8 @@ class Database:
         columns = {row['name'] for row in cursor.fetchall()}
         if columns and 'resolved_url' not in columns:
             cursor.execute("ALTER TABLE articles ADD COLUMN resolved_url TEXT")
-            self.conn.commit()
+        cursor.execute(self.REJECTED_URLS_SCHEMA)
+        self.conn.commit()
 
     def close(self):
         """Close database connection"""
@@ -141,6 +153,8 @@ class Database:
             )
         """)
 
+        cursor.execute(self.REJECTED_URLS_SCHEMA)
+
         # Distribution log table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS distribution_log (
@@ -227,8 +241,8 @@ class Database:
         # Note: Don't commit here - let the calling method handle the transaction
 
     def get_existing_urls(self, urls: List[str]) -> set:
-        """Return the subset of given URLs already present in the database
-        (matched against both collected and resolved URLs)."""
+        """Return the subset of given URLs already seen - stored as articles
+        or rejected by the AI (matched against collected and resolved URLs)."""
         existing = set()
         cursor = self.conn.cursor()
 
@@ -236,16 +250,27 @@ class Database:
         for i in range(0, len(urls), chunk_size):
             chunk = urls[i:i + chunk_size]
             placeholders = ','.join('?' * len(chunk))
-            cursor.execute(f"""
-                SELECT url, resolved_url FROM articles
-                WHERE url IN ({placeholders}) OR resolved_url IN ({placeholders})
-            """, chunk + chunk)
-            for row in cursor.fetchall():
-                existing.add(row['url'])
-                if row['resolved_url']:
-                    existing.add(row['resolved_url'])
+            for table in ('articles', 'rejected_urls'):
+                cursor.execute(f"""
+                    SELECT url, resolved_url FROM {table}
+                    WHERE url IN ({placeholders}) OR resolved_url IN ({placeholders})
+                """, chunk + chunk)
+                for row in cursor.fetchall():
+                    existing.add(row['url'])
+                    if row['resolved_url']:
+                        existing.add(row['resolved_url'])
 
         return existing
+
+    def insert_rejected_url(self, url: str, resolved_url: str = None,
+                            reason: str = None):
+        """Remember an AI-rejected URL so it is skipped on future runs"""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO rejected_urls (url, resolved_url, reason)
+            VALUES (?, ?, ?)
+        """, (url, resolved_url, reason))
+        self.conn.commit()
 
     def get_unpublished_articles(self, hours: int = 48, limit: int = 15) -> List[Dict]:
         """Get recent articles not yet sent to any distribution channel"""
@@ -395,6 +420,39 @@ class Database:
             stat['duration']
         ))
         self.conn.commit()
+
+    def prune_old_data(self, days: int = 30) -> Tuple[int, int]:
+        """Blank bulky article text and drop stale rejected URLs.
+
+        Full article content is only needed once, to generate the summary at
+        collection time. Blanking it after `days` caps the growth of the
+        committed database while keeping every row (title, summary, category,
+        URL, dates) for the future archive/dashboard. Rejected URLs only
+        matter while an article can still reappear in the collection window,
+        so old ones are dropped entirely.
+
+        Returns (articles_pruned, rejected_urls_dropped).
+        """
+        cursor = self.conn.cursor()
+        cutoff = datetime.now() - timedelta(days=days)
+
+        cursor.execute("""
+            UPDATE articles
+            SET content = NULL
+            WHERE collected_date < ?
+            AND content IS NOT NULL
+            AND summary IS NOT NULL
+        """, (cutoff,))
+        articles_pruned = cursor.rowcount
+
+        cursor.execute("""
+            DELETE FROM rejected_urls
+            WHERE rejected_date < ?
+        """, (cutoff,))
+        rejected_dropped = cursor.rowcount
+
+        self.conn.commit()
+        return articles_pruned, rejected_dropped
 
     def cleanup_old_articles(self, days: int = 90):
         """Delete articles older than N days"""

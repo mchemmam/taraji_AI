@@ -1,7 +1,7 @@
 #!/bin/bash
 # Quick database queries for Taraji AI
 
-DB="data/taraji_ai.db"
+DB="$(dirname "$0")/../data/taraji_ai.db"
 
 echo "=========================================="
 echo "DATABASE QUERIES FOR TARAJI AI"
