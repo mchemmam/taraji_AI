@@ -4,6 +4,7 @@ Ideas parked here so they don't get lost. Constraint for everything: **$0/month*
 
 ## Shipped
 
+- ✅ **2026-07-18** — Facebook auto-posting (code side): `distributors/facebook_page.py` posts to the Taraji Press Page via the Graph API; publication tracked per channel in `distribution_log`. Goes live once the Page is created and `FACEBOOK_PAGE_ID`/`FACEBOOK_PAGE_ACCESS_TOKEN` secrets are set (`python main.py facebook-setup` walks through it).
 - ✅ **2026-07-17** — Photo posts: Telegram messages use the extracted article image (`sendPhoto` + caption, text fallback).
 - ✅ **2026-07-17** — Failure alerting: workflow failures ping Telegram (`TELEGRAM_ALERT_CHAT_ID` secret optional, falls back to `TELEGRAM_CHAT_ID`).
 - ✅ **2026-07-17** — Bilingual summaries: every article gets both a French and an Arabic summary from the same batched Gemini call.
@@ -18,7 +19,6 @@ Ideas parked here so they don't get lost. Constraint for everything: **$0/month*
 ## Planned
 
 - **GitHub Pages dashboard** — Actions step exports the DB to JSON and deploys a static page (search, category/language filters, stats charts). The keep-every-row-forever retention policy exists for this. The exported JSON doubles as a free public API.
-- **Facebook auto-posting** — scoped in `PLAN.md`: Graph API, long-lived Page token, no App Review needed for our own Page.
 - **Match-day awareness** — pre-match reminders + full-time score posts. API-Football free tier (100 req/day) covers Tunisian Ligue 1 and CAF competitions; a handful of requests on match days fits.
 - **More sources** — candidates: official EST site, club YouTube channel RSS (`youtube.com/feeds/videos.xml?channel_id=…`, no key needed). Noisy feeds are cheap to add: keyword filter + AI relevance check reject junk once and remember it.
 

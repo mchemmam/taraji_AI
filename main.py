@@ -24,7 +24,7 @@ from processors import (
     create_ai_processor,
     create_content_extractor,
 )
-from distributors import create_telegram_distributor
+from distributors import create_telegram_distributor, create_facebook_distributor
 
 
 def cmd_init():
@@ -183,20 +183,23 @@ def cmd_collect(test_mode=False):
 
 
 def cmd_distribute():
-    """Send unpublished articles to Telegram"""
+    """Send unpublished articles to every configured channel"""
     log.info("=" * 60)
-    log.info("Distributing new articles to Telegram")
+    log.info("Distributing new articles")
     log.info("=" * 60)
 
-    distributor = create_telegram_distributor()
-    if not distributor.enabled:
-        log.error("Telegram not configured (need TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)")
+    distributors = [create_telegram_distributor(), create_facebook_distributor()]
+    enabled = [d for d in distributors if d.enabled]
+    if not enabled:
+        log.error("No distribution channel configured "
+                  "(need TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID and/or "
+                  "FACEBOOK_PAGE_ID/FACEBOOK_PAGE_ACCESS_TOKEN)")
         return
 
-    with get_db() as db:
-        stats = distributor.distribute(db)
-
-    log.info(f"Done: {stats['sent']} sent, {stats['failed']} failed")
+    for distributor in enabled:
+        with get_db() as db:
+            stats = distributor.distribute(db)
+        log.info(f"{distributor.channel}: {stats['sent']} sent, {stats['failed']} failed")
 
 
 def cmd_telegram_setup():
@@ -232,6 +235,83 @@ def cmd_telegram_setup():
             log.info(f"  chat_id={chat_id}  type={chat['type']}  name={name}")
     else:
         log.info(f"No recent messages. Send any message to @{bot['username']} on Telegram, then rerun this command.")
+
+
+def cmd_facebook_setup():
+    """Verify the Page token, or walk through generating one (one-time setup)"""
+    import os
+    import requests as rq
+
+    graph = "https://graph.facebook.com/v23.0"
+
+    page_token = os.getenv('FACEBOOK_PAGE_ACCESS_TOKEN')
+    if page_token:
+        data = rq.get(f"{graph}/me",
+                      params={'fields': 'id,name', 'access_token': page_token},
+                      timeout=15).json()
+        if 'error' in data:
+            log.error(f"Page token invalid: {data['error'].get('message')}")
+            return
+        log.info(f"✅ Page token OK: {data['name']} (page id {data['id']})")
+        page_id = os.getenv('FACEBOOK_PAGE_ID')
+        if page_id and page_id != data['id']:
+            log.warning(f"FACEBOOK_PAGE_ID is {page_id} but the token belongs "
+                        f"to page {data['id']} - fix FACEBOOK_PAGE_ID")
+        elif not page_id:
+            log.warning(f"FACEBOOK_PAGE_ID not set - set it to {data['id']}")
+        else:
+            log.info("Ready to post. Add both values as GitHub Actions secrets.")
+        return
+
+    # No page token yet - do the one-time exchange:
+    # short-lived user token -> long-lived user token -> permanent page token
+    app_id = os.getenv('FACEBOOK_APP_ID')
+    app_secret = os.getenv('FACEBOOK_APP_SECRET')
+    user_token = os.getenv('FACEBOOK_USER_TOKEN')
+
+    if not (app_id and app_secret and user_token):
+        log.info("One-time Facebook setup - do this once:")
+        log.info("  1. Create the Facebook Page (Taraji Press) with your personal account")
+        log.info("  2. Create an app on https://developers.facebook.com (type: Business/Other)")
+        log.info("  3. Open https://developers.facebook.com/tools/explorer - pick your app,")
+        log.info("     generate a User Token with permissions: pages_show_list,")
+        log.info("     pages_manage_posts, pages_read_engagement")
+        log.info("  4. Put in .env: FACEBOOK_APP_ID + FACEBOOK_APP_SECRET (app dashboard")
+        log.info("     > Settings > Basic) and FACEBOOK_USER_TOKEN (from step 3)")
+        log.info("  5. Rerun this command - it prints the page id and a long-lived Page")
+        log.info("     token to save as FACEBOOK_PAGE_ID / FACEBOOK_PAGE_ACCESS_TOKEN")
+        return
+
+    data = rq.get(f"{graph}/oauth/access_token", params={
+        'grant_type': 'fb_exchange_token',
+        'client_id': app_id,
+        'client_secret': app_secret,
+        'fb_exchange_token': user_token,
+    }, timeout=15).json()
+    if 'error' in data:
+        log.error(f"Token exchange failed: {data['error'].get('message')}")
+        log.error("User tokens expire after ~1h - regenerate FACEBOOK_USER_TOKEN "
+                  "in the Graph API Explorer and retry")
+        return
+    long_lived_user_token = data['access_token']
+
+    pages = rq.get(f"{graph}/me/accounts",
+                   params={'access_token': long_lived_user_token},
+                   timeout=15).json()
+    if 'error' in pages or not pages.get('data'):
+        log.error(f"Could not list your Pages: {pages.get('error', {}).get('message', 'no pages found')}")
+        log.error("Make sure the user token was generated with pages_show_list "
+                  "and that your account manages the Page")
+        return
+
+    log.info("✅ Your Pages (page tokens from a long-lived user token don't expire):")
+    for page in pages['data']:
+        log.info(f"  {page['name']}")
+        log.info(f"    FACEBOOK_PAGE_ID={page['id']}")
+        log.info(f"    FACEBOOK_PAGE_ACCESS_TOKEN={page['access_token']}")
+    log.info("Save the two values for Taraji Press in .env and as GitHub Actions "
+             "secrets, then rerun this command to verify. FACEBOOK_APP_SECRET and "
+             "FACEBOOK_USER_TOKEN can be removed from .env afterwards.")
 
 
 def cmd_stats():
@@ -270,8 +350,9 @@ def main():
     collect_parser = subparsers.add_parser('collect', help='Collect news articles')
     collect_parser.add_argument('--test', action='store_true', help='Test mode - show sample results')
 
-    subparsers.add_parser('distribute', help='Send unpublished articles to Telegram')
+    subparsers.add_parser('distribute', help='Send unpublished articles to all configured channels')
     subparsers.add_parser('telegram-setup', help='Verify bot token and list chat IDs')
+    subparsers.add_parser('facebook-setup', help='Verify Page token or generate one (one-time)')
     subparsers.add_parser('stats', help='Show database statistics')
 
     args = parser.parse_args()
@@ -284,6 +365,8 @@ def main():
         cmd_distribute()
     elif args.command == 'telegram-setup':
         cmd_telegram_setup()
+    elif args.command == 'facebook-setup':
+        cmd_facebook_setup()
     elif args.command == 'stats':
         cmd_stats()
     else:

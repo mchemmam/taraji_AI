@@ -41,11 +41,13 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py collect
 
-      - name: Distribute to Telegram
-        # No-ops gracefully while the Telegram secrets are not configured
+      - name: Distribute to Telegram and Facebook
+        # Each channel no-ops gracefully while its secrets are not configured
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
         run: python main.py distribute
 
       - name: Commit updated database

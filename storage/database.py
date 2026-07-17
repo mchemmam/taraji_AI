@@ -50,6 +50,12 @@ class Database:
         if columns and 'summary_ar' not in columns:
             cursor.execute("ALTER TABLE articles ADD COLUMN summary_ar TEXT")
         cursor.execute(self.REJECTED_URLS_SCHEMA)
+        # get_unpublished_articles probes distribution_log per article/channel
+        if columns:
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_distribution_article
+                ON distribution_log(article_id, channel)
+            """)
         self.conn.commit()
 
     def close(self):
@@ -170,6 +176,10 @@ class Database:
                 FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
             )
         """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_distribution_article
+            ON distribution_log(article_id, channel)
+        """)
 
         self.conn.commit()
         return True
@@ -276,19 +286,30 @@ class Database:
         """, (url, resolved_url, reason))
         self.conn.commit()
 
-    def get_unpublished_articles(self, hours: int = 48, limit: int = 15) -> List[Dict]:
-        """Get recent articles not yet sent to any distribution channel"""
+    def get_unpublished_articles(self, channel: str = 'telegram',
+                                 hours: int = 48, limit: int = 15) -> List[Dict]:
+        """Get recent articles not yet successfully sent to the given channel.
+
+        Tracked per channel via distribution_log (not the global is_published
+        flag), so each channel catches up independently - Telegram posting an
+        article doesn't hide it from Facebook.
+        """
         cursor = self.conn.cursor()
         cutoff = datetime.now() - timedelta(hours=hours)
 
         cursor.execute("""
-            SELECT * FROM articles
-            WHERE is_published = 0
-            AND collected_date >= ?
-            AND duplicate_of IS NULL
-            ORDER BY collected_date ASC
+            SELECT * FROM articles a
+            WHERE a.collected_date >= ?
+            AND a.duplicate_of IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM distribution_log dl
+                WHERE dl.article_id = a.id
+                AND dl.channel = ?
+                AND dl.status = 'success'
+            )
+            ORDER BY a.collected_date ASC
             LIMIT ?
-        """, (cutoff, limit))
+        """, (cutoff, channel, limit))
 
         return [dict(row) for row in cursor.fetchall()]
 

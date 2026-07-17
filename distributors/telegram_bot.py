@@ -28,6 +28,8 @@ CAPTION_MAX_LENGTH = 1024
 class TelegramDistributor:
     """Send articles to a Telegram chat or channel"""
 
+    channel = 'telegram'
+
     def __init__(self, bot_token: Optional[str] = None, chat_id: Optional[str] = None):
         self.bot_token = bot_token or os.getenv('TELEGRAM_BOT_TOKEN')
         # Test chat first; the public channel ID is kept separately until launch
@@ -147,7 +149,7 @@ class TelegramDistributor:
             log.warning("Telegram distributor not configured - skipping")
             return stats
 
-        articles = db.get_unpublished_articles()
+        articles = db.get_unpublished_articles(channel=self.channel)
         if not articles:
             log.info("No new articles to distribute")
             return stats
@@ -157,11 +159,11 @@ class TelegramDistributor:
         for article in articles:
             message_id = self.send_article(article)
             if message_id:
-                db.mark_published(article['id'], 'telegram', message_id, 'success')
+                db.mark_published(article['id'], self.channel, message_id, 'success')
                 stats['sent'] += 1
                 log.info(f"  ✅ Sent: {article['title'][:70]}")
             else:
-                db.mark_published(article['id'], 'telegram', None, 'failed')
+                db.mark_published(article['id'], self.channel, None, 'failed')
                 stats['failed'] += 1
                 log.warning(f"  ❌ Failed: {article['title'][:70]}")
 

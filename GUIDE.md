@@ -6,7 +6,7 @@ A plain-language reference for how the system actually works today. For the orig
 
 ## What it does
 
-Watches the internet for news about Espérance Sportive de Tunis (French, Arabic, English), filters out anything irrelevant, summarizes and categorizes what's left with AI, and posts new articles to a Telegram chat. Runs unattended on GitHub Actions — no server to maintain, no monthly cost.
+Watches the internet for news about Espérance Sportive de Tunis (French, Arabic, English), filters out anything irrelevant, summarizes and categorizes what's left with AI, and posts new articles to a Telegram chat and the **Taraji Press** Facebook Page. Runs unattended on GitHub Actions — no server to maintain, no monthly cost.
 
 ---
 
@@ -46,12 +46,24 @@ Per player: `name` (Latin, used as a query and for matching), `name_ar` (same in
 
 ## Distribution (`python main.py distribute`)
 
-Sends every unpublished article to a Telegram chat via `distributors/telegram_bot.py` — plain HTTPS calls to the Bot API, no SDK. One message per article (throttled to 1 every 3 seconds, under Telegram's ~20/min limit), formatted with the category emoji, title, **both FR and AR summaries**, source, and a link. Articles with an extracted image go out as a **photo post** with that text as the caption (captions max 1024 chars — summaries get trimmed to fit); if Telegram can't fetch the image, the message falls back to plain text automatically.
+Sends every unpublished article to each configured channel. Publication is tracked **per channel** in the `distribution_log` table, so each channel catches up independently — Telegram posting an article doesn't hide it from Facebook, and a channel added later back-fills the last 48h of articles on its first run.
+
+### Telegram
+
+`distributors/telegram_bot.py` — plain HTTPS calls to the Bot API, no SDK. One message per article (throttled to 1 every 3 seconds, under Telegram's ~20/min limit), formatted with the category emoji, title, **both FR and AR summaries**, source, and a link. Articles with an extracted image go out as a **photo post** with that text as the caption (captions max 1024 chars — summaries get trimmed to fit); if Telegram can't fetch the image, the message falls back to plain text automatically.
 
 - **Bot**: `@taraji_ai_news_bot`, created via @BotFather (2026-07-16).
 - **Target chat**: currently your private test chat (`TELEGRAM_CHAT_ID`) — deliberately *not* the public channel yet, so output quality gets validated before anyone else sees it.
 - **Public channel** (`@taraji_news`) is the planned destination once the test output looks right — just a config change (swap `TELEGRAM_CHAT_ID`), no code change.
 - `python main.py telegram-setup` verifies the bot token and lists chat IDs the bot has seen — use it whenever you need to (re)discover a chat ID (e.g. switching to the channel later).
+
+### Facebook (Taraji Press Page)
+
+`distributors/facebook_page.py` — plain HTTPS calls to the Graph API (`v23.0`), no SDK. Same content as Telegram, plain text: articles with an image go out as a **photo post** (image + caption + article URL), the rest as a **link post** (Facebook renders the preview card from the `link` field). Posting only to our own Page needs **no Facebook App Review**.
+
+- Auth is a **long-lived Page access token** (they don't expire in practice) + the Page id — `FACEBOOK_PAGE_ACCESS_TOKEN` / `FACEBOOK_PAGE_ID`.
+- `python main.py facebook-setup` does everything token-related: with no config it prints the one-time walkthrough (create Page → create developer app → Graph API Explorer user token); with `FACEBOOK_APP_ID`/`FACEBOOK_APP_SECRET`/`FACEBOOK_USER_TOKEN` set it performs the token exchange and prints the Page id + permanent Page token; with the Page token set it verifies it.
+- Branding assets for the Page (logo variants) already exist in `branding/`.
 
 ---
 
@@ -86,6 +98,9 @@ Runs with `event=workflow_dispatch` are the cron-job.org pings; `event=schedule`
 | `TELEGRAM_BOT_TOKEN` | ✅ | repo secret | Bot auth for posting |
 | `TELEGRAM_CHAT_ID` | ✅ | repo secret | Where messages get sent (test chat) |
 | `TELEGRAM_ALERT_CHAT_ID` | — | repo secret (optional) | Where workflow-failure alerts go; falls back to `TELEGRAM_CHAT_ID`. Set it when the main chat becomes the public channel |
+| `FACEBOOK_PAGE_ID` | ✅ | repo secret | The Taraji Press Page id |
+| `FACEBOOK_PAGE_ACCESS_TOKEN` | ✅ | repo secret | Long-lived Page token for posting (generated via `facebook-setup`, doesn't expire in practice) |
+| `FACEBOOK_APP_ID` / `APP_SECRET` / `USER_TOKEN` | setup only | — | Only used once by `facebook-setup` to mint the Page token; can be removed afterwards |
 | cron-job.org's GitHub PAT | — | lives only in cron-job.org's job config | Triggers `workflow_dispatch` every 15 min |
 
 Check what's set on GitHub with `gh secret list --repo mchemmam/taraji_AI`.
@@ -98,8 +113,9 @@ Check what's set on GitHub with `gh secret list --repo mchemmam/taraji_AI`.
 python main.py init              # create the DB schema (one-time)
 python main.py collect            # run the full pipeline once
 python main.py collect --test     # same, but prints sample results
-python main.py distribute         # push unpublished articles to Telegram
+python main.py distribute         # push unpublished articles to all configured channels
 python main.py telegram-setup     # verify bot token, list chat IDs
+python main.py facebook-setup     # verify Page token, or mint one (one-time walkthrough)
 python main.py stats              # article counts by category/language
 ```
 
@@ -117,4 +133,4 @@ $0/month. Google News + RSS are free with no key. Gemini free tier (~250 req/day
 
 ## Not built yet / open threads
 
-See `ROADMAP.md` for the full parked-ideas list (importance ranking, daily digest, Pages dashboard, Facebook, match-day features...). Nearest milestone: **switch to the public `@taraji_news` channel** once test-chat output quality is validated — swap `TELEGRAM_CHAT_ID`, and set `TELEGRAM_ALERT_CHAT_ID` to the private chat at the same time.
+See `ROADMAP.md` for the full parked-ideas list (importance ranking, daily digest, Pages dashboard, match-day features...). Nearest milestone: **switch to the public `@taraji_news` channel** once test-chat output quality is validated — swap `TELEGRAM_CHAT_ID`, and set `TELEGRAM_ALERT_CHAT_ID` to the private chat at the same time.

@@ -998,7 +998,7 @@ for _, row in df.iterrows():
 
 ### Facebook & Twitter (Future)
 
-**Facebook:** (parked idea, 2026-07-16 — not yet implemented)
+**Facebook:** (implemented 2026-07-18 as scoped below — see `GUIDE.md` for the live setup)
 - New distributor module (`distributors/facebook_page.py`), same pattern as `telegram_bot.py`: plain HTTPS calls to the Graph API, no SDK
 - `POST /{page-id}/feed` with the article title/summary/link
 - Auth: a **long-lived Page Access Token**, generated once via Graph API Explorer (never expires in practice)
@@ -1582,7 +1582,7 @@ ls -lh data/exports/ | tail -5
 
 **Distribution Enhancements:**
 - [ ] WhatsApp integration (Business API or unofficial)
-- [ ] Facebook auto-posting
+- [x] Facebook auto-posting
 - [ ] Twitter auto-posting
 - [ ] Email newsletter
 - [ ] Mobile app (PWA or React Native)

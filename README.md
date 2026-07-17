@@ -47,7 +47,7 @@ taraji_AI/
 ├── collectors/        # Data collection (Google News, RSS)
 ├── processors/        # Keyword filter, extraction, language detection, AI
 ├── storage/           # Database operations
-├── distributors/      # Telegram bot
+├── distributors/      # Telegram bot + Facebook Page
 ├── config/            # Configuration (settings.py, keywords.json)
 ├── utils/             # Utilities and logging
 ├── scripts/           # Dev utilities (inspect/view articles, keyword checks)
@@ -91,11 +91,14 @@ python main.py collect
 # Collect in test mode (shows samples)
 python main.py collect --test
 
-# Send unpublished articles to Telegram
+# Send unpublished articles to all configured channels (Telegram, Facebook)
 python main.py distribute
 
 # Verify bot token and discover chat ids
 python main.py telegram-setup
+
+# Verify the Facebook Page token, or mint one (one-time walkthrough)
+python main.py facebook-setup
 
 # Show statistics
 python main.py stats
@@ -107,7 +110,8 @@ The pipeline runs on GitHub Actions every 15 minutes
 (`.github/workflows/collect.yml`). State persists by committing
 `data/taraji_ai.db` back to the repository after each run that finds
 new articles. Secrets (`GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_CHAT_ID`) live in the repository's Actions secrets.
+`TELEGRAM_CHAT_ID`, `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN`)
+live in the repository's Actions secrets.
 
 ## Status
 
@@ -119,6 +123,8 @@ new articles. Secrets (`GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`,
 ✅ Scheduled collection via GitHub Actions (15-min cadence via cron-job.org)
 ✅ Telegram distributor (live, posting to test chat; photo posts + bilingual)
 ✅ Workflow failure alerts via Telegram
+✅ Facebook distributor (code ready; goes live once the Taraji Press Page
+   is created and its secrets are set — `python main.py facebook-setup`)
 ⏳ Switch to public channel @taraji_news (pending output validation)
 
 Everything else planned: see `ROADMAP.md`.
