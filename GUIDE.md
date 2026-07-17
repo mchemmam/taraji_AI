@@ -14,10 +14,11 @@ Watches the internet for news about Espérance Sportive de Tunis (French, Arabic
 
 Each run does 7 steps, in order (see `main.py:cmd_collect`):
 
-1. **Collect** — pulls articles from Google News (`collectors/google_news.py`) and a curated list of RSS feeds (`collectors/rss_collector.py`, feed list in `config/settings.py` `RSS_FEEDS` — currently Nessma TV Sport (AR + FR) and Mosaïque FM).
+1. **Collect** — pulls articles from Google News (`collectors/google_news.py`) and a curated list of RSS feeds (`collectors/rss_collector.py`, feed list in `config/settings.py` `RSS_FEEDS` — currently Nessma TV Sport (AR + FR) and Mosaïque FM). Besides club-name queries, Google News is also searched for **monitored players** (`config/players.json`: current squad members on departure watch + reported transfer targets) — rumor articles about a player often never mention the club, and news about an incoming target structurally can't. Player names are OR-batched ~6 per query (Latin and Arabic separately) to keep the request count low.
 2. **Keyword filter** — cheap text match before any network/AI cost. Rules live in `config/keywords.json`, checked in this order:
    - `exact`: unambiguous club names per language ("Espérance de Tunis", "الترجي التونسي", etc.). These always match — negative keywords can NOT veto them, otherwise derby coverage ("Espérance de Tunis bat le Club Africain") would be dropped. A wrongly-kept article still gets caught by the AI relevance check in step 7.
    - `negative`: vetoes everything below this point — lookalikes such as other Tunisian clubs (Club Africain, Étoile du Sahel, CSS Sfax, Espérance de Zarzis...), tennis player Ons Jabeur, actress Taraji P. Henson, and generic football noise (Messi, Ronaldo, Wimbledon) that would otherwise slip through fuzzy matching.
+   - monitored player names from `config/players.json` (full-name spellings only, all scripts) — so a "Boualia vers le départ?" piece that never says "Espérance" still gets through. Namesakes that slip past are caught by the AI relevance check.
    - `exact_ambiguous`: short names that are substrings of lookalikes — bare "الترجي" also appears in "الترجي الجرجيسي" (Espérance de Zarzis), so it only counts if no negative keyword fired.
    - `contextual`: ambiguous terms like "EST" or "Taraji" only count if a football-related word is nearby.
    - fuzzy: typo-tolerant match on the full club names (85% similarity).
@@ -27,12 +28,19 @@ Each run does 7 steps, in order (see `main.py:cmd_collect`):
 4. **Extract content** — fetches full article text from the URL (needed for a decent AI summary, not just the RSS blurb).
 5. **Dedup again** — after following redirects, catches the same story reached via two different URLs (e.g. Google News link + the RSS link).
 6. **Detect language** — fr / ar / en, stored per article.
-7. **AI processing** — one **batched** Gemini call (`gemini-2.5-flash`) per run does everything together: relevance double-check, staleness check, categorization, **French + Arabic summaries** for every article, and **duplicate detection** — both within the batch (same story via two sources/languages) and against the titles of the last 48h of stored articles (re-reports of stories already covered). Batching everything into a single request is deliberate: the free tier is roughly 250 requests/day, and per-article calls would burn through that fast. Falls back to rule-based classification if Gemini is unavailable. Articles the AI rejects (reasons: `irrelevant`, `stale`, `duplicate`, `already_covered`) are remembered in the `rejected_urls` table so they aren't re-extracted and re-judged on every subsequent run.
+7. **AI processing** — one **batched** Gemini call (`gemini-2.5-flash`) per run does everything together: relevance double-check (the prompt includes the monitored-players list from `config/players.json`, with each player's `note` used to reject namesakes — keep those notes current), staleness check, categorization, **French + Arabic summaries** for every article, and **duplicate detection** — both within the batch (same story via two sources/languages) and against the titles of the last 48h of stored articles (re-reports of stories already covered). Batching everything into a single request is deliberate: the free tier is roughly 250 requests/day, and per-article calls would burn through that fast. Falls back to rule-based classification if Gemini is unavailable. Articles the AI rejects (reasons: `irrelevant`, `stale`, `duplicate`, `already_covered`) are remembered in the `rejected_urls` table so they aren't re-extracted and re-judged on every subsequent run.
 
 Then everything new gets stored in `data/taraji_ai.db` (SQLite). Runs that store something also **prune**: full article text older than 30 days (`CONTENT_RETENTION_DAYS`) is blanked — the text is only needed once, to generate the summary — and rejected URLs older than 30 days are dropped. Every article row (title, summary, category, URL, dates) is kept forever for the future archive/dashboard; this just caps the growth of the git-committed database. Deliberately no `VACUUM`: rewriting the whole file would defeat git's delta compression.
 
 ### Categories
 Defined in `config/settings.py` (`CATEGORIES`): ⚽ match, 💼 transfer, 🏥 injury, 💬 statement, 💰 finance, 📰 other. Each has French/Arabic/English display names and its own emoji, used when formatting Telegram messages.
+
+### Monitored players (mercato watch)
+`config/players.json` is the single file to edit when the mercato moves — the collector queries, the keyword filter, and the Gemini prompt all read from it (`config/players.py` is the loader). Two sections:
+- `squad`: current EST players worth watching for departure/loan rumors.
+- `targets`: players EST is reportedly chasing — the only way to catch these early, since articles about them don't mention EST until a deal is close.
+
+Per player: `name` (Latin, used as a query and for matching), `name_ar` (same in Arabic — get the spelling the Tunisian press actually uses, and add second spellings as aliases when the press disagrees, e.g. توقاي/توغاي for Tougai), `aliases` (extra spellings, matching only), and `note` (one line fed to Gemini so it can reject namesakes — update it when a player changes club). Matching is **full-name only** by design; surname-only headlines ("توقاي يقترب من...") are deliberately not matched because bare surnames are too noisy, and such articles almost always mention the club anyway. A malformed `players.json` fails the run loudly rather than silently dropping player coverage. Started 2026-07-17 as a pilot (4 targets + 9 departure-watch players); expand once the noise level proves acceptable.
 
 ---
 

@@ -10,6 +10,11 @@ from gnews import GNews
 from .base_collector import BaseCollector
 from utils import log, clean_text, parse_date
 from config import settings
+from config.players import all_players
+
+# Player names OR-ed together per Google News query - keeps the number of
+# extra requests low (Google rate-limits aggressive clients)
+PLAYERS_PER_QUERY = 6
 
 
 def has_arabic(text: str) -> bool:
@@ -36,14 +41,37 @@ class GoogleNewsCollector(BaseCollector):
             "الترجي التونسي",
         ]
 
-        log.info(f"GoogleNewsCollector initialized with {len(self.queries)} queries")
+        # Monitored players (squad departure watch + transfer targets) get
+        # their own queries - rumor articles often never mention the club
+        self.player_queries = self._build_player_queries()
+
+        log.info(f"GoogleNewsCollector initialized with {len(self.queries)} club "
+                 f"queries + {len(self.player_queries)} player queries")
+
+    @staticmethod
+    def _build_player_queries() -> List[str]:
+        """OR-batched Google News queries for the monitored players.
+
+        Latin and Arabic names are batched separately so each query stays
+        in one language (has_arabic() then picks the right search language).
+        """
+        players = all_players()
+        latin_names = [p['name'] for p in players]
+        arabic_names = [p['name_ar'] for p in players if p.get('name_ar')]
+
+        queries = []
+        for names in (latin_names, arabic_names):
+            for i in range(0, len(names), PLAYERS_PER_QUERY):
+                chunk = names[i:i + PLAYERS_PER_QUERY]
+                queries.append(" OR ".join(f'"{name}"' for name in chunk))
+        return queries
 
     def collect(self) -> List[Dict]:
         """Collect articles from Google News"""
         all_articles = []
         seen_urls = set()
 
-        for query in self.queries:
+        for query in self.queries + self.player_queries:
             # Detect if query is in Arabic and use appropriate language setting
             is_arabic = has_arabic(query)
             language = 'ar' if is_arabic else settings.GNEWS_LANGUAGE

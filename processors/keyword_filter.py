@@ -7,6 +7,7 @@ from rapidfuzz import fuzz
 
 from utils import load_json_config, log
 from config import settings
+from config.players import all_players, match_variants
 
 
 class KeywordFilter:
@@ -22,7 +23,16 @@ class KeywordFilter:
         self.contextual_keywords = self.keywords.get('contextual', {})
         self.negative_keywords = self.keywords.get('negative', [])
 
-        log.info(f"Keyword filter loaded with {len(self._all_keywords())} keywords")
+        # Monitored player names (squad departure watch + transfer targets):
+        # (lowercased variant, canonical name) pairs for substring matching
+        self.player_keywords = [
+            (variant.lower(), player['name'])
+            for player in all_players()
+            for variant in match_variants(player)
+        ]
+
+        log.info(f"Keyword filter loaded with {len(self._all_keywords())} keywords "
+                 f"and {len(self.player_keywords)} player name variants")
 
     def _all_keywords(self) -> List[str]:
         """Get all exact keywords (for counting)"""
@@ -83,14 +93,22 @@ class KeywordFilter:
                 log.info(f"❌ Filtered out by negative keyword: {neg_keyword}")
                 return False, None
 
-        # Step 3: Ambiguous short names (bare "الترجي" is also a substring of
+        # Step 3: Monitored player names (full-name spellings from
+        # players.json). Placed after the negative veto; namesakes that slip
+        # through are caught by the AI relevance check downstream.
+        for variant, canonical in self.player_keywords:
+            if variant in text_lower:
+                log.info(f"✅ Matched player name: {canonical} ({variant})")
+                return True, f"{canonical} (player)"
+
+        # Step 4: Ambiguous short names (bare "الترجي" is also a substring of
         # "الترجي الجرجيسي"/Zarzis) - only valid once negatives had their say
         matched = self._match_exact(self.ambiguous_keywords, text_lower, language)
         if matched:
             log.info(f"✅ Matched exact keyword: {matched}")
             return True, matched
 
-        # Step 4: Check contextual keywords (require context words nearby)
+        # Step 5: Check contextual keywords (require context words nearby)
         for keyword, context_words in self.contextual_keywords.items():
             if keyword.lower() in text_lower:
                 # Check if any context word appears in the text
@@ -99,7 +117,7 @@ class KeywordFilter:
                         log.info(f"✅ Matched contextual keyword: {keyword} + {context}")
                         return True, f"{keyword} (contextual)"
 
-        # Step 5: Fuzzy matching for typos (only for main club name variations)
+        # Step 6: Fuzzy matching for typos (only for main club name variations)
         main_keywords = [
             'Espérance Sportive de Tunis',
             'Esperance Sportive de Tunis',

@@ -17,6 +17,7 @@ from typing import List, Dict, Optional, Tuple
 
 from utils import log
 from config import settings
+from config.players import load_players
 from .classifier import create_classifier
 
 try:
@@ -36,15 +37,15 @@ MAX_RECENT_TITLES = 40
 PROMPT_HEADER_TEMPLATE = """You are processing news items for a fan news service about the Tunisian football club Espérance Sportive de Tunis (EST, also known as Taraji / الترجي الرياضي التونسي).
 
 Today's date is {today}.
-{recent_block}
+{players_block}{recent_block}
 For EACH numbered item below, return a JSON object with:
 - "id": the item number (integer, as given)
-- "relevant": true only if the item is genuinely about Espérance Sportive de Tunis (the Tunis football club). Items about other Tunisian clubs that also contain "الترجي"/Espérance/Taraji in their name - e.g. Espérance de Zarzis (الترجي الجرجيسي), ES Sahel - the actress Taraji P. Henson, or other unrelated topics are NOT relevant.
+- "relevant": true only if the item is genuinely about Espérance Sportive de Tunis (the Tunis football club) or specifically about one of the monitored players listed above. Items about other Tunisian clubs that also contain "الترجي"/Espérance/Taraji in their name - e.g. Espérance de Zarzis (الترجي الجرجيسي), ES Sahel - the actress Taraji P. Henson, or other unrelated topics are NOT relevant. For monitored players, beware of namesakes: the item must be about the person described in the list (check club, nationality, position), not someone else with the same name.
 - "stale": true if the item rehashes an already-concluded event rather than reporting new information — e.g. a fixture/broadcast/replay listing page for a match played long ago, or an aggregator republishing an old story under a refreshed date. Judge this from the actual event described in the content (compare it against today's date), not from the item's claimed publish date - sources sometimes fake freshness. false if it's genuinely new information.
 - "duplicate_of": the id (integer) of an EARLIER item in this batch that covers the same story, or null. Two items cover the same story when a reader learns nothing new from the second one - the same event reported by another source or in another language. A follow-up that adds new information is NOT a duplicate.
 - "already_covered": true if the item covers the same story as one in the "Recently covered stories" list above (same rule: nothing new for a reader who saw that story). false otherwise, or if no list was given.
 - "category": one of "match", "transfer", "injury", "statement", "finance", "other"
-- "summary_fr": a factual 2-3 sentence summary in French, focused on facts concerning Espérance Sportive de Tunis.
+- "summary_fr": a factual 2-3 sentence summary in French, focused on facts concerning Espérance Sportive de Tunis (or, for an item about a monitored player, on that player).
 - "summary_ar": the same summary in Arabic.
 
 Return ONLY a JSON array of these objects, one per item, no other text.
@@ -57,6 +58,10 @@ Recently covered stories (already published - for the "already_covered" field):
 {titles}
 """
 
+PLAYERS_BLOCK_HEADER = """
+Monitored players - an item specifically about one of these individuals IS relevant even when the club is not mentioned:
+"""
+
 
 class AIProcessor:
     """Batched relevance check + classification + summarization via Gemini"""
@@ -67,6 +72,7 @@ class AIProcessor:
         self.client = None
         self.requests_made = 0
         self._fallback_classifier = create_classifier()
+        self._players_block = self._build_players_block()
 
         if not GENAI_AVAILABLE:
             log.warning("google-genai not installed - using rule-based fallback only")
@@ -201,6 +207,22 @@ class AIProcessor:
 
         return None
 
+    @staticmethod
+    def _build_players_block() -> str:
+        """Prompt section listing monitored players from players.json."""
+        players = load_players()
+        if not (players['squad'] or players['targets']):
+            return ""
+
+        lines = [PLAYERS_BLOCK_HEADER]
+        if players['squad']:
+            lines.append("Current EST squad players (departure/loan rumors and performance news are relevant):")
+            lines += [f"- {p['name']} ({p['note']})" for p in players['squad']]
+        if players['targets']:
+            lines.append("Reported EST transfer targets (any transfer/mercato news about them is relevant):")
+            lines += [f"- {p['name']} ({p['note']})" for p in players['targets']]
+        return "\n".join(lines) + "\n"
+
     def _build_prompt(self, articles: List[Dict],
                       recent_titles: Optional[List[str]] = None) -> str:
         items = []
@@ -216,7 +238,9 @@ class AIProcessor:
             recent_block = RECENT_BLOCK_TEMPLATE.format(titles=titles)
 
         header = PROMPT_HEADER_TEMPLATE.format(
-            today=date.today().isoformat(), recent_block=recent_block
+            today=date.today().isoformat(),
+            players_block=self._players_block,
+            recent_block=recent_block,
         )
         return header + "\n\n".join(items)
 

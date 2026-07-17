@@ -1,0 +1,85 @@
+{
+  "_doc": "Players monitored beyond club-name coverage. 'squad' = current EST players on departure watch; 'targets' = reported EST transfer targets. 'name' + 'name_ar' are used as Google News queries; matching also uses 'aliases' (alternate spellings seen in the press). 'note' is injected into the Gemini prompt for namesake disambiguation - keep it short and update it when a player moves.",
+  "targets": [
+    {
+      "name": "Adel Bettaieb",
+      "name_ar": "عادل بالطيب",
+      "aliases": ["عادل بلطيب"],
+      "note": "French-born Tunisian forward, free agent (ex-Argeș Pitești) - reported EST target"
+    },
+    {
+      "name": "Hazem Mastouri",
+      "name_ar": "حازم المستوري",
+      "aliases": ["حازم مستوري"],
+      "note": "Tunisian international striker at Dynamo Makhachkala (Russia) - reported EST target"
+    },
+    {
+      "name": "Lucas Ribeiro",
+      "name_ar": "لوكاس ريبيرو",
+      "aliases": ["Lucas Ribeiro Costa"],
+      "note": "Brazilian forward, ex-Mamelodi Sundowns, now Cultural Leonesa (Spain) - reported EST target"
+    },
+    {
+      "name": "Samy Chouchane",
+      "name_ar": "سامي شوشان",
+      "aliases": ["Sami Chouchane"],
+      "note": "French-born Tunisian midfielder at Dijon FCO - reported EST target"
+    }
+  ],
+  "squad": [
+    {
+      "name": "Elias Mokwana",
+      "name_ar": "إلياس موكوانا",
+      "aliases": ["الياس موكوانا", "Elias Mokawana"],
+      "note": "South African winger owned by EST, on loan at Al-Hazem (Saudi Arabia)"
+    },
+    {
+      "name": "Kouceila Boualia",
+      "name_ar": "كوسيلة بوعلية",
+      "aliases": ["كوسيلا بوعلية", "Koussaila Boualia"],
+      "note": "Algerian winger at EST, reportedly transfer-listed"
+    },
+    {
+      "name": "Mohamed Amine Tougai",
+      "name_ar": "محمد أمين توقاي",
+      "aliases": ["محمد أمين توغاي", "Mohamed Amine Tougaï"],
+      "note": "Algerian international centre-back at EST"
+    },
+    {
+      "name": "Bechir Ben Said",
+      "name_ar": "بشير بن سعيد",
+      "aliases": ["Béchir Ben Saïd"],
+      "note": "Tunisian international goalkeeper at EST"
+    },
+    {
+      "name": "Ibrahima Keita",
+      "name_ar": "إبراهيما كيتا",
+      "aliases": ["ابراهيما كيتا", "Ibrahim Keita"],
+      "note": "Mauritanian international right-back at EST, ex-TP Mazembe"
+    },
+    {
+      "name": "Jack Diarra",
+      "name_ar": "جاك ديارا",
+      "aliases": [],
+      "note": "Burkinabè international winger at EST"
+    },
+    {
+      "name": "Aboubacar Diakite",
+      "name_ar": "أبو بكر دياكيتي",
+      "aliases": ["أبوبكر دياكيتي", "Aboubacar Diakité"],
+      "note": "Malian centre-forward at EST"
+    },
+    {
+      "name": "Elyas Bouzaiene",
+      "name_ar": "إلياس بوزيان",
+      "aliases": ["الياس بوزيان", "Elias Bouzaiene"],
+      "note": "Swedish-born Tunisian right-back at EST"
+    },
+    {
+      "name": "Mohamed Mouhli",
+      "name_ar": "محمد موحلي",
+      "aliases": ["محمد الموحلي"],
+      "note": "Belgian-Tunisian attacking midfielder at EST"
+    }
+  ]
+}

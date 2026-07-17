@@ -67,6 +67,11 @@ Edit `config/keywords.json` to add/modify club keywords:
 
 Test changes with `python scripts/check_keywords.py "some headline"`.
 
+### Monitored players
+Edit `config/players.json` to follow individual players beyond club-name coverage (see GUIDE.md for field details):
+- `squad`: current EST players on departure watch
+- `targets`: reported transfer targets (their news never mentions EST until a deal is close)
+
 ### Settings
 Edit `config/settings.py` for:
 - RSS feed sources (`RSS_FEEDS`)
