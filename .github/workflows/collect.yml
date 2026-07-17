@@ -55,10 +55,15 @@ jobs:
           git add data/taraji_ai.db
           if ! git diff --cached --quiet; then
             git commit -m "data: update articles database"
-            # During a rebase "theirs" is the commit being replayed (ours), so
-            # -X theirs keeps our newest database if a concurrent push conflicts
-            git pull --rebase -X theirs origin main
-            git push
+            if ! git push; then
+              # Remote advanced mid-run - with runs serialized on the branch
+              # tip that can only be a non-database commit (e.g. code pushed
+              # from a laptop), so rebase it in and retry once. A rebase
+              # conflict would mean concurrent database writes; fail loudly
+              # (Telegram alert) instead of silently overwriting one side.
+              git pull --rebase origin main
+              git push
+            fi
           else
             echo "No new articles this run - nothing to commit"
           fi
