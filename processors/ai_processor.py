@@ -3,11 +3,15 @@ Batched AI processing for Taraji AI using the Gemini API (google-genai SDK).
 
 One API call per collection run handles all new articles at once: relevance
 verification, category classification, and a 2-3 sentence summary in the
-article's language. This keeps usage far below the Gemini free-tier daily
-request quota even at a 15-minute collection cadence.
+article's language. Free-tier daily quotas are ~20 requests per model
+(settings.GEMINI_MODELS), so the call walks a chain of models, skipping to
+the next bucket on a quota error.
 
-Falls back to the rule-based classifier + extractive summary per article
-when the API is unavailable or the response can't be parsed.
+FAIL CLOSED: when no model answers, articles are NOT processed and NOT
+published - the caller defers them to the next run, where they are
+re-collected. The old behavior (mark everything relevant and post it
+unfiltered) put five wrong-club articles on the live channels on
+2026-07-16; never reintroduce it.
 """
 import json
 import os
@@ -30,7 +34,6 @@ except ImportError:
 
 # Max characters of article content sent to the model per article
 MAX_CONTENT_CHARS = 1500
-MAX_RETRIES = 2
 # Max recently-published titles included for already-covered detection
 MAX_RECENT_TITLES = 40
 
@@ -40,7 +43,7 @@ Today's date is {today}.
 {players_block}{recent_block}
 For EACH numbered item below, return a JSON object with:
 - "id": the item number (integer, as given)
-- "relevant": true only if the item is genuinely about Espérance Sportive de Tunis (the Tunis football club) or specifically about one of the monitored players listed above. Items about other Tunisian clubs that also contain "الترجي"/Espérance/Taraji in their name - e.g. Espérance de Zarzis (الترجي الجرجيسي), ES Sahel - the actress Taraji P. Henson, or other unrelated topics are NOT relevant. For monitored players, beware of namesakes: the item must be about the person described in the list (check club, nationality, position), not someone else with the same name.
+- "relevant": true only if the item is genuinely about Espérance Sportive de Tunis (the Tunis football club) or specifically about one of the monitored players listed above. Items about other Tunisian clubs that also contain "الترجي"/Espérance/Taraji in their name - e.g. Espérance de Zarzis (الترجي الجرجيسي), ES Sahel - the actress Taraji P. Henson, or other unrelated topics are NOT relevant. For monitored players, beware of namesakes: the item must be about the person described in the list (check club, nationality, position), not someone else with the same name. However, an item about ANY player signing for, joining, leaving or playing for Espérance Sportive de Tunis itself IS relevant, whether or not that player appears in the monitored list.
 - "stale": true if the item rehashes an already-concluded event rather than reporting new information — e.g. a fixture/broadcast/replay listing page for a match played long ago, or an aggregator republishing an old story under a refreshed date. Judge this from the actual event described in the content (compare it against today's date), not from the item's claimed publish date - sources sometimes fake freshness. false if it's genuinely new information.
 - "duplicate_of": the id (integer) of an EARLIER item in this batch that covers the same story, or null. Two items cover the same story when a reader learns nothing new from the second one - the same event reported by another source or in another language. A follow-up that adds new information is NOT a duplicate.
 - "already_covered": true if the item covers the same story as one in the "Recently covered stories" list above (same rule: nothing new for a reader who saw that story). false otherwise, or if no list was given.
@@ -68,54 +71,52 @@ class AIProcessor:
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
-        self.model = settings.GEMINI_MODEL
+        self.models = settings.GEMINI_MODELS
         self.client = None
         self.requests_made = 0
+        self.last_model_used = None
         self._fallback_classifier = create_classifier()
         self._players_block = self._build_players_block()
 
         if not GENAI_AVAILABLE:
-            log.warning("google-genai not installed - using rule-based fallback only")
+            log.warning("google-genai not installed - articles will be deferred, not published")
         elif not self.api_key:
-            log.warning("No GEMINI_API_KEY found - using rule-based fallback only")
+            log.warning("No GEMINI_API_KEY found - articles will be deferred, not published")
         else:
             try:
                 self.client = genai.Client(api_key=self.api_key)
-                log.info(f"Gemini client initialized (model: {self.model})")
+                log.info(f"Gemini client initialized (model chain: {', '.join(self.models)})")
             except Exception as e:
                 log.error(f"Failed to initialize Gemini client: {e}")
 
     def process_articles(self, articles: List[Dict],
                          recent_titles: Optional[List[str]] = None
-                         ) -> Tuple[List[Dict], List[Tuple[Dict, str]]]:
+                         ) -> Tuple[List[Dict], List[Tuple[Dict, str]], bool]:
         """
         Enrich articles in place with 'relevant', 'category', 'summary' (FR)
         and 'summary_ar'.
 
-        Sends all articles in a single Gemini call, along with recently
-        published titles so the model can flag re-reports of stories we
-        already covered (cross-language and cross-source dedup).
+        Sends all articles in a single Gemini call (walking the model chain
+        on quota errors), along with recently published titles so the model
+        can flag re-reports of stories we already covered (cross-language
+        and cross-source dedup).
 
-        On any failure, falls back to the rule-based classifier and
-        extractive summaries, and marks every article relevant (the keyword
-        filter already ran upstream).
-
-        Returns (kept_articles, rejected) where rejected is a list of
-        (article, reason) pairs - reason is one of 'irrelevant', 'stale',
-        'duplicate', 'already_covered'.
+        Returns (kept_articles, rejected, ai_available). rejected is a list
+        of (article, reason) pairs - reason is one of 'irrelevant', 'stale',
+        'duplicate', 'already_covered'. ai_available=False means NO article
+        was judged (every model failed/exhausted): the caller must defer the
+        batch to a later run - never publish unjudged articles.
         """
         if not articles:
-            return [], []
+            return [], [], True
 
         results = self._gemini_batch(articles, recent_titles) if self.client else None
 
         if results is None:
-            log.warning("Using rule-based fallback for classification/summaries")
-            for article in articles:
-                article['relevant'] = True
-                article['category'] = self._fallback_classify(article)
-                article['summary'] = self._extractive_summary(article)
-            return articles, []
+            if not self.client:
+                log.error("Gemini client not configured (GEMINI_API_KEY) - "
+                          "deferring batch, nothing will be published unjudged")
+            return [], [], False
 
         by_id = {}
         for r in results:
@@ -173,38 +174,54 @@ class AIProcessor:
             kept.append(article)
 
         log.info(f"AI processing: {len(articles)} articles → {len(kept)} relevant")
-        return kept, rejected
+        return kept, rejected, True
 
     def _gemini_batch(self, articles: List[Dict],
                       recent_titles: Optional[List[str]] = None) -> Optional[List[Dict]]:
-        """Make one Gemini call for all articles. Returns parsed list or None."""
+        """One batched call, walking the model chain. Returns parsed list or None.
+
+        Each model has its own free-tier daily bucket, so a quota error
+        (429/RESOURCE_EXHAUSTED) moves straight to the next model - sleeping
+        and retrying the same model cannot refill a daily quota. Transient
+        errors (503 overload etc.) get one short retry per model.
+        """
         prompt = self._build_prompt(articles, recent_titles)
 
-        for attempt in range(1, MAX_RETRIES + 2):
-            try:
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type='application/json',
-                        temperature=0.2,
-                    ),
-                )
-                self.requests_made += 1
-                parsed = json.loads(response.text)
-                if isinstance(parsed, list):
-                    return parsed
-                log.warning(f"Gemini returned non-list JSON: {type(parsed)}")
-                return None
+        for model in self.models:
+            for attempt in (1, 2):
+                try:
+                    response = self.client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type='application/json',
+                            temperature=0.2,
+                        ),
+                    )
+                    self.requests_made += 1
+                    parsed = json.loads(response.text)
+                    if isinstance(parsed, list):
+                        if model != self.models[0]:
+                            log.info(f"Gemini batch served by fallback model {model}")
+                        self.last_model_used = model
+                        return parsed
+                    log.warning(f"{model} returned non-list JSON: {type(parsed)}")
+                    break  # malformed output - try the next model, not the same one
 
-            except json.JSONDecodeError as e:
-                log.warning(f"Gemini response was not valid JSON: {e}")
-                return None
-            except Exception as e:
-                log.warning(f"Gemini call failed (attempt {attempt}): {e}")
-                if attempt <= MAX_RETRIES:
-                    time.sleep(5 * attempt)
+                except json.JSONDecodeError as e:
+                    log.warning(f"{model} response was not valid JSON: {e}")
+                    break  # next model
+                except Exception as e:
+                    self.requests_made += 1
+                    message = str(e)
+                    if 'RESOURCE_EXHAUSTED' in message or '429' in message[:16]:
+                        log.info(f"{model} daily quota exhausted - trying next model")
+                        break  # next bucket, retrying here is pointless
+                    log.warning(f"{model} call failed (attempt {attempt}): {message[:200]}")
+                    if attempt == 1:
+                        time.sleep(5)
 
+        log.error("All Gemini models failed or exhausted - batch will be deferred")
         return None
 
     @staticmethod
@@ -274,6 +291,7 @@ class AIProcessor:
         return {
             'requests_made': self.requests_made,
             'gemini_available': self.client is not None,
+            'last_model_used': self.last_model_used,
         }
 
 

@@ -26,6 +26,7 @@ from processors import (
     create_ai_processor,
     create_content_extractor,
     rival_mention_in_article,
+    find_rereport,
 )
 from distributors import create_telegram_distributor, create_facebook_distributor
 
@@ -143,11 +144,33 @@ def cmd_collect(test_mode=False):
     log.info("\n[4/7] Checking for new articles...")
     with get_db() as db:
         known_urls = db.get_existing_urls([a['url'] for a in filtered_articles])
+        recent_titles = [a['title'] for a in db.get_recent_articles(hours=48, limit=40)]
     new_articles = [a for a in filtered_articles if a['url'] not in known_urls]
     log.info(f"{len(new_articles)} new articles ({len(filtered_articles) - len(new_articles)} already known)")
 
     if not new_articles:
         log.info("Nothing new this run.")
+        return
+
+    # Near-identical titles are re-reports of stories we already carry
+    # (amp/www variants, syndicated copies) - reject them deterministically
+    # before extraction and before any Gemini quota is spent. Cross-language
+    # and reworded re-reports still go to the AI's already_covered check.
+    seen_titles = list(recent_titles)
+    fresh_articles = []
+    with get_db() as db:
+        for article in new_articles:
+            rereported = find_rereport(article['title'], seen_titles)
+            if rereported:
+                log.info(f"  ♻️  Re-report of \"{rereported[:50]}\": {article['title'][:60]}")
+                db.insert_rejected_url(article['url'], None, 'already_covered')
+            else:
+                seen_titles.append(article['title'])
+                fresh_articles.append(article)
+    new_articles = fresh_articles
+
+    if not new_articles:
+        log.info("All new articles were re-reports of covered stories.")
         return
 
     # Step 5: Resolve URLs and extract full article content
@@ -224,17 +247,26 @@ def cmd_collect(test_mode=False):
         text = article.get('content', '') or f"{article.get('title', '')} {article.get('description', '')}"
         article['language'] = detect_language(text)
 
-    # Step 7: AI processing - one batched Gemini call for relevance check,
-    # classification, FR/AR summaries and duplicate detection (rule-based
-    # fallback inside). Recent titles let the model reject re-reports of
-    # stories we already covered via another source or language.
+    # Step 7: AI processing - one batched Gemini call (walking the model
+    # chain on quota errors) for relevance check, classification, FR/AR
+    # summaries and duplicate detection. Recent titles let the model reject
+    # re-reports of stories we already covered via another source/language.
     log.info("\n[7/7] AI processing (relevance + category + summary + dedup)...")
-    with get_db() as db:
-        recent_titles = [a['title'] for a in db.get_recent_articles(hours=48, limit=40)]
     ai = create_ai_processor()
-    new_articles, rejected = ai.process_articles(new_articles, recent_titles=recent_titles)
+    batch_size = len(new_articles)
+    new_articles, rejected, ai_available = ai.process_articles(new_articles, recent_titles=recent_titles)
     stats = ai.get_stats()
-    log.info(f"  Gemini requests this run: {stats['requests_made']} (available: {stats['gemini_available']})")
+    log.info(f"  Gemini requests this run: {stats['requests_made']} "
+             f"(model: {stats['last_model_used']})")
+
+    if not ai_available:
+        # FAIL CLOSED: no model could judge the batch. The articles are not
+        # stored, so the next run re-collects and retries them (~15 min).
+        # Publishing unjudged articles is never an option - that posted
+        # wrong-club content on 2026-07-16.
+        log.warning(f"Gemini unavailable on every model - deferring "
+                    f"{batch_size} new article(s) to the next run")
+        return
 
     # Remember rejected URLs so they are not re-extracted and re-judged
     # on every subsequent 15-minute run

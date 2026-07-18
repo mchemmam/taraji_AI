@@ -7,8 +7,10 @@ from .classifier import ArticleClassifier, create_classifier
 from .ai_processor import AIProcessor, create_ai_processor
 from .content_extractor import ContentExtractor, create_content_extractor, extract_content
 from .rival_guard import mentions_rival, rival_mention_in_article, screen_articles
+from .title_dedup import find_rereport
 
 __all__ = [
+    'find_rereport',
     'KeywordFilter',
     'create_keyword_filter',
     'LanguageDetector',

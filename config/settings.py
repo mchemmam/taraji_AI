@@ -143,9 +143,27 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Gemini API settings
-# One batched request per collection run keeps usage well below the
-# free-tier daily quota (~250 requests/day for gemini-2.5-flash in 2026).
-GEMINI_MODEL = "gemini-2.5-flash"
+# Free-tier quotas verified LIVE on 2026-07-18 (429 quotaValue + probe calls,
+# do not trust remembered numbers): each model has its OWN daily bucket of
+# ~20 requests/day, refilled gradually through the day - not the ~250/day
+# this design originally assumed (Google cut free tiers in Dec 2025;
+# gemini-2.5-flash-lite is closed to new projects, 2.0-* buckets are zero).
+# Processing therefore tries these models in order and moves to the next on
+# a quota error, giving several independent daily buckets. Order = newest/
+# best first.
+GEMINI_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+]
+
+# A flaky AI "irrelevant" verdict must not blacklist a fresh URL forever
+# (2026-07-18: a legit "Diarra signs for EST" story was lost this way).
+# 'irrelevant' rejections are re-judged after this many hours; stale/
+# duplicate/already_covered rejections stay permanent - re-judging can't
+# change those.
+IRRELEVANT_REJECTION_TTL_HOURS = 6
 
 # Telegram settings
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096

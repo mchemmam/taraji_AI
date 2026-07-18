@@ -2,6 +2,7 @@
 Keyword filtering for Taraji AI
 Filters articles based on club mentions with smart contextual matching
 """
+import re
 from typing import List, Tuple, Optional
 from rapidfuzz import fuzz
 
@@ -22,6 +23,20 @@ class KeywordFilter:
         self.ambiguous_keywords = self.keywords.get('exact_ambiguous', {})
         self.contextual_keywords = self.keywords.get('contextual', {})
         self.negative_keywords = self.keywords.get('negative', [])
+
+        # Contextual keywords must match as whole words, and all-caps ones
+        # ("EST") case-sensitively: substring-lowercase matching made "EST"
+        # hit the French verb "est" - i.e. virtually every French sentence -
+        # which flooded the AI step with unrelated Tunisian news and burned
+        # the daily Gemini quota (observed 2026-07-17/18 after the French
+        # Google News edition shipped).
+        self._contextual_patterns = {
+            keyword: re.compile(
+                rf'\b{re.escape(keyword)}\b',
+                0 if keyword.isupper() else re.IGNORECASE,
+            )
+            for keyword in self.contextual_keywords
+        }
 
         # Monitored player names (squad departure watch + transfer targets):
         # (lowercased variant, canonical name) pairs for substring matching
@@ -108,9 +123,10 @@ class KeywordFilter:
             log.info(f"✅ Matched exact keyword: {matched}")
             return True, matched
 
-        # Step 5: Check contextual keywords (require context words nearby)
+        # Step 5: Check contextual keywords (require context words nearby).
+        # Whole-word match on the original-case text - see __init__.
         for keyword, context_words in self.contextual_keywords.items():
-            if keyword.lower() in text_lower:
+            if self._contextual_patterns[keyword].search(text):
                 # Check if any context word appears in the text
                 for context in context_words:
                     if context.lower() in text_lower:

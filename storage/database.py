@@ -256,18 +256,33 @@ class Database:
 
     def get_existing_urls(self, urls: List[str]) -> set:
         """Return the subset of given URLs already seen - stored as articles
-        or rejected by the AI (matched against collected and resolved URLs)."""
+        or rejected (matched against collected and resolved URLs).
+
+        'irrelevant' rejections expire after IRRELEVANT_REJECTION_TTL_HOURS:
+        that verdict comes from a single stochastic AI call and has wrongly
+        buried legitimate stories, so a fresh URL gets re-judged. All other
+        rejection reasons (stale/duplicate/already_covered) are facts that a
+        re-run cannot change and stay permanent.
+        """
         existing = set()
         cursor = self.conn.cursor()
 
+        ttl_hours = int(settings.IRRELEVANT_REJECTION_TTL_HOURS)
         chunk_size = 200
         for i in range(0, len(urls), chunk_size):
             chunk = urls[i:i + chunk_size]
             placeholders = ','.join('?' * len(chunk))
             for table in ('articles', 'rejected_urls'):
+                not_expired = ""
+                if table == 'rejected_urls':
+                    # rejected_date is CURRENT_TIMESTAMP, i.e. UTC
+                    not_expired = f"""
+                    AND NOT (reason = 'irrelevant'
+                             AND rejected_date < datetime('now', '-{ttl_hours} hours'))"""
                 cursor.execute(f"""
                     SELECT url, resolved_url FROM {table}
-                    WHERE url IN ({placeholders}) OR resolved_url IN ({placeholders})
+                    WHERE (url IN ({placeholders}) OR resolved_url IN ({placeholders}))
+                    {not_expired}
                 """, chunk + chunk)
                 for row in cursor.fetchall():
                     existing.add(row['url'])
@@ -278,10 +293,15 @@ class Database:
 
     def insert_rejected_url(self, url: str, resolved_url: str = None,
                             reason: str = None):
-        """Remember an AI-rejected URL so it is skipped on future runs"""
+        """Remember a rejected URL so it is skipped on future runs.
+
+        REPLACE (not IGNORE) so a re-rejection refreshes rejected_date:
+        an expired-and-re-judged 'irrelevant' URL re-arms its TTL instead of
+        being re-extracted and re-judged on every subsequent run.
+        """
         cursor = self.conn.cursor()
         cursor.execute("""
-            INSERT OR IGNORE INTO rejected_urls (url, resolved_url, reason)
+            INSERT OR REPLACE INTO rejected_urls (url, resolved_url, reason)
             VALUES (?, ?, ?)
         """, (url, resolved_url, reason))
         self.conn.commit()
