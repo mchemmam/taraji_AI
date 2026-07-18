@@ -1,5 +1,5 @@
 {
-  "_doc": "Players monitored beyond club-name coverage. 'squad' = current EST players on departure watch; 'targets' = reported EST transfer targets. 'name' + 'name_ar' are used as Google News queries; matching also uses 'aliases' (alternate spellings seen in the press). 'note' is injected into the Gemini prompt for namesake disambiguation - keep it short and update it when a player moves.",
+  "_doc": "Players monitored beyond club-name coverage. 'squad' = current EST players on departure watch; 'targets' = reported EST transfer targets. 'name' + 'name_ar' are used as Google News queries; matching also uses 'aliases' (alternate spellings seen in the press). 'note' is injected into the Gemini prompt for namesake disambiguation - keep it short and update it when a player moves. Optional 'extra_searches' adds per-player searches in foreign Google News editions (query/language/country) for players whose market lives outside the en/fr/ar editions - scope the query with a context word when the bare name is ambiguous in that market.",
   "targets": [
     {
       "name": "Adel Bettaieb",
@@ -17,7 +17,11 @@
       "name": "Lucas Ribeiro",
       "name_ar": "لوكاس ريبيرو",
       "aliases": ["Lucas Ribeiro Costa"],
-      "note": "Brazilian forward, ex-Mamelodi Sundowns, now Cultural Leonesa (Spain) - reported EST target"
+      "note": "Brazilian forward, ex-Mamelodi Sundowns, now Cultural Leonesa (Spain) - reported EST target. Beware namesakes: a Joao Pessoa politician and other Brazilian footballers share this name",
+      "extra_searches": [
+        {"query": "\"Lucas Ribeiro\" futebol", "language": "pt-BR", "country": "BR"},
+        {"query": "\"Lucas Ribeiro\"", "language": "es", "country": "ES"}
+      ]
     },
     {
       "name": "Samy Chouchane",

@@ -45,8 +45,16 @@ class GoogleNewsCollector(BaseCollector):
         # their own queries - rumor articles often never mention the club
         self.player_queries = self._build_player_queries()
 
+        # Per-player searches in foreign Google News editions (players.json
+        # "extra_searches") - a player whose transfer market lives outside
+        # the en/fr/ar editions (e.g. the Brazilian and Spanish press for
+        # Lucas Ribeiro) is invisible to the queries above: Google News has
+        # no cross-language search
+        self.extra_searches = self._build_extra_searches()
+
         log.info(f"GoogleNewsCollector initialized with {len(self.queries)} club "
-                 f"queries + {len(self.player_queries)} player queries")
+                 f"queries + {len(self.player_queries)} player queries "
+                 f"+ {len(self.extra_searches)} foreign-edition player searches")
 
     @staticmethod
     def _build_player_queries() -> List[str]:
@@ -67,62 +75,83 @@ class GoogleNewsCollector(BaseCollector):
                 queries.append(" OR ".join(f'"{name}"' for name in chunk))
         return queries
 
+    @staticmethod
+    def _build_extra_searches() -> List[tuple]:
+        """(query, language, country) searches from players.json extra_searches.
+
+        Each entry names its Google News edition explicitly. The query should
+        carry a scoping word when the bare name is ambiguous in that market -
+        e.g. '"Lucas Ribeiro" futebol': the bare name in the Brazilian
+        edition is dominated by a Joao Pessoa politician (verified
+        2026-07-18: 100/100 results were his, 'futebol' cuts it to ~8
+        mostly-football ones).
+        """
+        return [
+            (search['query'], search['language'], search['country'])
+            for player in all_players()
+            for search in player.get('extra_searches', [])
+        ]
+
+    def _search_plan(self) -> List[tuple]:
+        """Every (query, language, country) request of one collection sweep.
+
+        Arabic-script queries get the Arabic edition; Latin-script queries
+        run once per configured Latin edition (en, fr, ...); foreign-edition
+        player searches name their own edition.
+        """
+        plan = []
+        for query in self.queries + self.player_queries:
+            languages = ['ar'] if has_arabic(query) else settings.GNEWS_LATIN_LANGUAGES
+            for language in languages:
+                plan.append((query, language, settings.GNEWS_COUNTRY))
+        plan.extend(self.extra_searches)
+        return plan
+
     def collect(self) -> List[Dict]:
         """Collect articles from Google News"""
         all_articles = []
         seen_urls = set()
 
-        for query in self.queries + self.player_queries:
-            # Arabic-script queries get the Arabic edition; Latin-script
-            # queries run once per configured Latin edition (en, fr, ...)
-            if has_arabic(query):
-                languages = ['ar']
-            else:
-                languages = settings.GNEWS_LATIN_LANGUAGES
+        for query, language, country in self._search_plan():
+            log.info(f"Searching Google News for: {query} "
+                     f"(language={language}, country={country})")
 
-            for language in languages:
-                log.info(f"Searching Google News for: {query} (language={language})")
+            try:
+                gnews = GNews(
+                    language=language,
+                    country=country,
+                    period=settings.GNEWS_PERIOD,
+                    max_results=settings.GNEWS_MAX_RESULTS
+                )
 
-                try:
-                    # Create GNews instance with appropriate language for this query
-                    gnews = GNews(
-                        language=language,
-                        country=settings.GNEWS_COUNTRY,
-                        period=settings.GNEWS_PERIOD,
-                        max_results=settings.GNEWS_MAX_RESULTS
-                    )
+                results = gnews.get_news(query)
 
-                    # Get news for this query
-                    results = gnews.get_news(query)
+                if not results:
+                    log.warning(f"⚠️  No results for query: {query} (language={language})")
+                    continue
 
-                    if not results:
-                        log.warning(f"⚠️  No results for query: {query} (language={language})")
+                log.info(f"✅ Found {len(results)} articles for: {query} (language={language})")
+
+                for article in results:
+                    url = article.get('url')
+
+                    # Skip duplicates
+                    if url in seen_urls:
                         continue
 
-                    log.info(f"✅ Found {len(results)} articles for: {query} (language={language})")
+                    seen_urls.add(url)
 
-                    # Process results
-                    for article in results:
-                        url = article.get('url')
+                    normalized = self._normalize_article(article, query)
+                    all_articles.append(normalized)
 
-                        # Skip duplicates
-                        if url in seen_urls:
-                            continue
+                # Be nice to the server - add delay between queries
+                time.sleep(2)
 
-                        seen_urls.add(url)
-
-                        # Normalize article structure
-                        normalized = self._normalize_article(article, query)
-                        all_articles.append(normalized)
-
-                    # Be nice to the server - add delay between queries
-                    time.sleep(2)
-
-                except Exception as e:
-                    log.error(f"❌ Error collecting for query '{query}' "
-                              f"(language={language}): {e}", exc_info=True)
-                    self.stats['errors'] += 1
-                    continue
+            except Exception as e:
+                log.error(f"❌ Error collecting for query '{query}' "
+                          f"(language={language}): {e}", exc_info=True)
+                self.stats['errors'] += 1
+                continue
 
         # Remove exact duplicates by URL
         unique_articles = self._deduplicate_by_url(all_articles)
