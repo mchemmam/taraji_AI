@@ -86,6 +86,9 @@ class ContentExtractor:
                 'text': text.strip(),
                 'authors': [metadata.author] if metadata and metadata.author else [],
                 'top_image': top_image,
+                # Publication date as printed on the page (meta tags/JSON-LD),
+                # used to catch stale stories re-served with a fresh feed date
+                'page_date': metadata.date if metadata and metadata.date else None,
                 'extraction_method': 'trafilatura',
             }
 

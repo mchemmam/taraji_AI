@@ -292,7 +292,8 @@ class Database:
 
         Tracked per channel via distribution_log (not the global is_published
         flag), so each channel catches up independently - Telegram posting an
-        article doesn't hide it from Facebook.
+        article doesn't hide it from Facebook. 'vetoed' rows (rival-club
+        guard) are terminal like 'success'; only 'failed' sends are retried.
         """
         cursor = self.conn.cursor()
         cutoff = datetime.now() - timedelta(hours=hours)
@@ -305,7 +306,7 @@ class Database:
                 SELECT 1 FROM distribution_log dl
                 WHERE dl.article_id = a.id
                 AND dl.channel = ?
-                AND dl.status = 'success'
+                AND dl.status IN ('success', 'vetoed')
             )
             ORDER BY a.collected_date ASC
             LIMIT ?

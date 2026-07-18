@@ -14,6 +14,7 @@ import requests
 
 from utils import log
 from config import settings
+from processors.rival_guard import screen_articles
 
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
@@ -150,6 +151,9 @@ class TelegramDistributor:
             return stats
 
         articles = db.get_unpublished_articles(channel=self.channel)
+        # Last line of defense for the rival-club rule - also covers articles
+        # that entered the database before the collection-time guard existed
+        articles = screen_articles(db, articles, self.channel)
         if not articles:
             log.info("No new articles to distribute")
             return stats

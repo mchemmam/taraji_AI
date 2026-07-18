@@ -5,6 +5,7 @@ Taraji AI - Main orchestrator script
 import re
 import sys
 import argparse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Add current directory to path
@@ -24,6 +25,7 @@ from processors import (
     detect_language,
     create_ai_processor,
     create_content_extractor,
+    rival_mention_in_article,
 )
 from distributors import create_telegram_distributor, create_facebook_distributor
 
@@ -75,6 +77,29 @@ def _drop_blocked_sources(articles):
         log.info(f"Dropped {dropped} article(s) from blocked sources "
                  f"({', '.join(settings.SOURCE_BLOCKLIST)})")
     return kept
+
+
+def _split_stale(articles):
+    """Split articles into (fresh, stale) using the on-page publication date.
+
+    The feed-reported date already passed the 1-day window, but Google News
+    and aggregators re-serve old stories under refreshed timestamps - the
+    date printed on the article page itself is the authority. Articles whose
+    page carries no parseable date pass through: most pages have one, and the
+    rival guard / AI relevance check still stand behind this.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.MAX_ARTICLE_AGE_DAYS)
+    fresh, stale = [], []
+    for article in articles:
+        try:
+            page_date = datetime.fromisoformat(article.get('page_date') or '')
+        except ValueError:
+            fresh.append(article)
+            continue
+        if page_date.tzinfo is None:
+            page_date = page_date.replace(tzinfo=timezone.utc)
+        (stale if page_date < cutoff else fresh).append(article)
+    return fresh, stale
 
 
 def cmd_collect(test_mode=False):
@@ -139,6 +164,7 @@ def cmd_collect(test_mode=False):
             article['author'] = ', '.join(result.get('authors', []))
             article['image_url'] = result.get('top_image') or ''
             article['resolved_url'] = result.get('resolved_url', url)
+            article['page_date'] = result.get('page_date')
             extracted_count += 1
         else:
             article['resolved_url'] = extractor.resolve_url(url)
@@ -149,6 +175,34 @@ def cmd_collect(test_mode=False):
     new_articles = _drop_blocked_sources(new_articles)
     if not new_articles:
         log.info("All new articles were from blocked sources.")
+        return
+
+    # Stale stories re-served under a fresh feed date, and rival-club content
+    # (HARD rule: Club Africain never reaches the channels) are rejected here,
+    # before any AI budget is spent. Rejections are remembered so the same
+    # URLs are not re-extracted and re-judged on every scheduled run.
+    new_articles, stale_articles = _split_stale(new_articles)
+    rival_articles = []
+    kept_articles = []
+    for article in new_articles:
+        matched = rival_mention_in_article(article)
+        if matched:
+            rival_articles.append((article, f"rival club content ({matched})"))
+        else:
+            kept_articles.append(article)
+    new_articles = kept_articles
+
+    rejects = [(a, f"stale: page dated {a.get('page_date')}") for a in stale_articles]
+    rejects += rival_articles
+    if rejects:
+        with get_db() as db:
+            for article, reason in rejects:
+                log.info(f"  🚫 Rejected ({reason}): {article['title'][:70]}")
+                db.insert_rejected_url(
+                    article['url'], article.get('resolved_url'), reason
+                )
+    if not new_articles:
+        log.info("All new articles were stale or rival-club content.")
         return
 
     # Same story can arrive via different collected URLs (Google News + RSS);

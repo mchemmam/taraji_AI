@@ -36,6 +36,13 @@ SOURCE_BLOCKLIST = [
     "MSN",
 ]
 
+# Hard ceiling on article age, enforced against the date printed on the
+# article page itself (extracted alongside the content). The feed-reported
+# date is not trusted on its own: Google News and aggregators re-serve
+# long-concluded stories under refreshed timestamps, which is how a May
+# title-decider passed the 1-day window in July.
+MAX_ARTICLE_AGE_DAYS = 3
+
 # RSS feed sources - this list is what the RSS collector actually fetches;
 # add/remove feeds here
 RSS_FEEDS = [
