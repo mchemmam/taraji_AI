@@ -19,9 +19,12 @@ LOG_FILE = LOGS_DIR / "app.log"
 ERROR_LOG_FILE = LOGS_DIR / "errors.log"
 
 # Google News settings
-# Note: These settings affect ranking/prioritization, NOT which languages are searched
-# The actual language of results depends on your search queries (we use French, Arabic, English)
-GNEWS_LANGUAGE = "en"  # Interface language (doesn't restrict search results)
+# Google News has no cross-language search: each request targets one edition
+# (hl/gl), so every language listed here re-runs all Latin-script queries
+# against that edition. 'en' surfaces the international press; 'fr' the
+# Tunisian francophone press (Kawarji, RTCI...), which the English edition
+# never returns. Arabic-script queries always run against the 'ar' edition.
+GNEWS_LATIN_LANGUAGES = ["en", "fr"]
 GNEWS_COUNTRY = "TN"   # Tunisia - prioritizes Tunisian news sources
 GNEWS_PERIOD = "1d"    # Last 24h - the scheduled runs only need fresh news
 GNEWS_MAX_RESULTS = 100  # Max results per query

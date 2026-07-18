@@ -53,7 +53,8 @@ class GoogleNewsCollector(BaseCollector):
         """OR-batched Google News queries for the monitored players.
 
         Latin and Arabic names are batched separately so each query stays
-        in one language (has_arabic() then picks the right search language).
+        in one script (has_arabic() then routes the query to the Arabic
+        edition or to each configured Latin edition).
         """
         players = all_players()
         latin_names = [p['name'] for p in players]
@@ -72,51 +73,56 @@ class GoogleNewsCollector(BaseCollector):
         seen_urls = set()
 
         for query in self.queries + self.player_queries:
-            # Detect if query is in Arabic and use appropriate language setting
-            is_arabic = has_arabic(query)
-            language = 'ar' if is_arabic else settings.GNEWS_LANGUAGE
+            # Arabic-script queries get the Arabic edition; Latin-script
+            # queries run once per configured Latin edition (en, fr, ...)
+            if has_arabic(query):
+                languages = ['ar']
+            else:
+                languages = settings.GNEWS_LATIN_LANGUAGES
 
-            log.info(f"Searching Google News for: {query} (language={language})")
+            for language in languages:
+                log.info(f"Searching Google News for: {query} (language={language})")
 
-            try:
-                # Create GNews instance with appropriate language for this query
-                gnews = GNews(
-                    language=language,
-                    country=settings.GNEWS_COUNTRY,
-                    period=settings.GNEWS_PERIOD,
-                    max_results=settings.GNEWS_MAX_RESULTS
-                )
+                try:
+                    # Create GNews instance with appropriate language for this query
+                    gnews = GNews(
+                        language=language,
+                        country=settings.GNEWS_COUNTRY,
+                        period=settings.GNEWS_PERIOD,
+                        max_results=settings.GNEWS_MAX_RESULTS
+                    )
 
-                # Get news for this query
-                results = gnews.get_news(query)
+                    # Get news for this query
+                    results = gnews.get_news(query)
 
-                if not results:
-                    log.warning(f"⚠️  No results for query: {query}")
-                    continue
-
-                log.info(f"✅ Found {len(results)} articles for: {query}")
-
-                # Process results
-                for article in results:
-                    url = article.get('url')
-
-                    # Skip duplicates
-                    if url in seen_urls:
+                    if not results:
+                        log.warning(f"⚠️  No results for query: {query} (language={language})")
                         continue
 
-                    seen_urls.add(url)
+                    log.info(f"✅ Found {len(results)} articles for: {query} (language={language})")
 
-                    # Normalize article structure
-                    normalized = self._normalize_article(article, query)
-                    all_articles.append(normalized)
+                    # Process results
+                    for article in results:
+                        url = article.get('url')
 
-                # Be nice to the server - add delay between queries
-                time.sleep(2)
+                        # Skip duplicates
+                        if url in seen_urls:
+                            continue
 
-            except Exception as e:
-                log.error(f"❌ Error collecting for query '{query}': {e}", exc_info=True)
-                self.stats['errors'] += 1
-                continue
+                        seen_urls.add(url)
+
+                        # Normalize article structure
+                        normalized = self._normalize_article(article, query)
+                        all_articles.append(normalized)
+
+                    # Be nice to the server - add delay between queries
+                    time.sleep(2)
+
+                except Exception as e:
+                    log.error(f"❌ Error collecting for query '{query}' "
+                              f"(language={language}): {e}", exc_info=True)
+                    self.stats['errors'] += 1
+                    continue
 
         # Remove exact duplicates by URL
         unique_articles = self._deduplicate_by_url(all_articles)
