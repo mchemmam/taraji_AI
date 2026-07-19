@@ -144,7 +144,15 @@ def cmd_collect(test_mode=False):
     log.info("\n[4/7] Checking for new articles...")
     with get_db() as db:
         known_urls = db.get_existing_urls([a['url'] for a in filtered_articles])
-        recent_titles = [a['title'] for a in db.get_recent_articles(hours=48, limit=40)]
+        # Recent stories feed two dedup layers: titles for the deterministic
+        # re-report filter below, title + published summary for the AI's
+        # already-covered/update judgment (the summary is what our readers
+        # actually saw - the only basis for "does this add anything new?")
+        recent_stories = [
+            {'title': a['title'], 'summary': a.get('summary')}
+            for a in db.get_recent_articles(hours=48, limit=40)
+        ]
+        recent_titles = [s['title'] for s in recent_stories]
     new_articles = [a for a in filtered_articles if a['url'] not in known_urls]
     log.info(f"{len(new_articles)} new articles ({len(filtered_articles) - len(new_articles)} already known)")
 
@@ -249,12 +257,13 @@ def cmd_collect(test_mode=False):
 
     # Step 7: AI processing - one batched Gemini call (walking the model
     # chain on quota errors) for relevance check, classification, FR/AR
-    # summaries and duplicate detection. Recent titles let the model reject
-    # re-reports of stories we already covered via another source/language.
+    # summaries and duplicate detection. Recent stories (title + published
+    # summary) let the model reject re-reports of covered stories - unless
+    # they add material new facts, which become "Mise à jour" posts.
     log.info("\n[7/7] AI processing (relevance + category + summary + dedup)...")
     ai = create_ai_processor()
     batch_size = len(new_articles)
-    new_articles, rejected, ai_available = ai.process_articles(new_articles, recent_titles=recent_titles)
+    new_articles, rejected, ai_available = ai.process_articles(new_articles, recent_stories=recent_stories)
     stats = ai.get_stats()
     log.info(f"  Gemini requests this run: {stats['requests_made']} "
              f"(model: {stats['last_model_used']})")

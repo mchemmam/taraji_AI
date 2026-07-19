@@ -34,8 +34,10 @@ except ImportError:
 
 # Max characters of article content sent to the model per article
 MAX_CONTENT_CHARS = 1500
-# Max recently-published titles included for already-covered detection
-MAX_RECENT_TITLES = 40
+# Max recently-published stories included for already-covered detection
+MAX_RECENT_STORIES = 40
+# Max characters of each published summary shown in the recent-stories block
+MAX_RECENT_SUMMARY_CHARS = 300
 
 PROMPT_HEADER_TEMPLATE = """You are processing news items for a fan news service about the Tunisian football club Espérance Sportive de Tunis (EST, also known as Taraji / الترجي الرياضي التونسي).
 
@@ -45,11 +47,12 @@ For EACH numbered item below, return a JSON object with:
 - "id": the item number (integer, as given)
 - "relevant": true only if the item is genuinely about Espérance Sportive de Tunis (the Tunis football club) or specifically about one of the monitored players listed above. Items about other Tunisian clubs that also contain "الترجي"/Espérance/Taraji in their name - e.g. Espérance de Zarzis (الترجي الجرجيسي), ES Sahel - the actress Taraji P. Henson, or other unrelated topics are NOT relevant. For monitored players, beware of namesakes: the item must be about the person described in the list (check club, nationality, position), not someone else with the same name. However, an item about ANY player signing for, joining, leaving or playing for Espérance Sportive de Tunis itself IS relevant, whether or not that player appears in the monitored list.
 - "stale": true if the item rehashes an already-concluded event rather than reporting new information — e.g. a fixture/broadcast/replay listing page for a match played long ago, or an aggregator republishing an old story under a refreshed date. Judge this from the actual event described in the content (compare it against today's date), not from the item's claimed publish date - sources sometimes fake freshness. false if it's genuinely new information.
-- "duplicate_of": the id (integer) of an EARLIER item in this batch that covers the same story, or null. Two items cover the same story when a reader learns nothing new from the second one - the same event reported by another source or in another language. A follow-up that adds new information is NOT a duplicate.
-- "already_covered": true if the item covers the same story as one in the "Recently covered stories" list above (same rule: nothing new for a reader who saw that story). false otherwise, or if no list was given.
+- "duplicate_of": the id (integer) of an EARLIER item in this batch that covers the same story, or null. Two items cover the same story when a reader learns nothing new from the second one - the same event reported by another source or in another language. A follow-up that adds new information is NOT a duplicate. When a later item duplicates an earlier one but mentions extra material details, still mark it as a duplicate - and fold those details into the EARLIER item's summaries.
+- "already_covered": true if the item covers the same story as one in the "Recently covered stories" list above - the same event, whatever the source or language. false otherwise, or if no list was given.
+- "update_details": only meaningful when "already_covered" is true, otherwise null. Compare the item against that story's published summary: if the item contains MATERIAL new facts absent from what our readers were already told - a fee or amount, contract terms, an official confirmation or denial, a completed signing, a medical verdict, a fixed date - set this to a one-line description of what is new. Reworded speculation, opinion, extra background, or the same facts from another outlet are NOT new details: leave it null.
 - "category": one of "match", "transfer", "injury", "statement", "finance", "other"
-- "summary_fr": a factual 2-3 sentence summary in French, focused on facts concerning Espérance Sportive de Tunis (or, for an item about a monitored player, on that player).
-- "summary_ar": the same summary in Arabic.
+- "summary_fr": a factual 2-3 sentence summary in French, focused on facts concerning Espérance Sportive de Tunis (or, for an item about a monitored player, on that player). When "update_details" is set, start with "Mise à jour :" and focus on the NEW facts, recalling the covered story in half a sentence at most.
+- "summary_ar": the same summary in Arabic (when "update_details" is set, start with "تحديث:").
 
 Return ONLY a JSON array of these objects, one per item, no other text.
 
@@ -57,7 +60,7 @@ Items:
 """
 
 RECENT_BLOCK_TEMPLATE = """
-Recently covered stories (already published - for the "already_covered" field):
+Recently covered stories (already published - for the "already_covered" and "update_details" fields). Each "published:" line is exactly what our readers were told:
 {titles}
 """
 
@@ -90,16 +93,19 @@ class AIProcessor:
                 log.error(f"Failed to initialize Gemini client: {e}")
 
     def process_articles(self, articles: List[Dict],
-                         recent_titles: Optional[List[str]] = None
+                         recent_stories: Optional[List[Dict]] = None
                          ) -> Tuple[List[Dict], List[Tuple[Dict, str]], bool]:
         """
         Enrich articles in place with 'relevant', 'category', 'summary' (FR)
         and 'summary_ar'.
 
         Sends all articles in a single Gemini call (walking the model chain
-        on quota errors), along with recently published titles so the model
-        can flag re-reports of stories we already covered (cross-language
-        and cross-source dedup).
+        on quota errors), along with recently published stories (title +
+        published summary) so the model can flag re-reports of stories we
+        already covered (cross-language and cross-source dedup). A re-report
+        that adds material new facts vs. the published summary is kept as an
+        update post ('is_update' set, summaries framed as "Mise à jour")
+        instead of being rejected.
 
         Returns (kept_articles, rejected, ai_available). rejected is a list
         of (article, reason) pairs - reason is one of 'irrelevant', 'stale',
@@ -110,7 +116,7 @@ class AIProcessor:
         if not articles:
             return [], [], True
 
-        results = self._gemini_batch(articles, recent_titles) if self.client else None
+        results = self._gemini_batch(articles, recent_stories) if self.client else None
 
         if results is None:
             if not self.client:
@@ -158,9 +164,16 @@ class AIProcessor:
                 continue
 
             if r.get('already_covered', False):
-                log.info(f"♻️  AI marked already covered: {article.get('title', '')[:70]}")
-                rejected.append((article, 'already_covered'))
-                continue
+                update = r.get('update_details')
+                update = update.strip() if isinstance(update, str) else ''
+                if update and update.lower() not in ('null', 'none'):
+                    log.info(f"🔄 Update to a covered story ({update[:70]}): "
+                             f"{article.get('title', '')[:70]}")
+                    article['is_update'] = True
+                else:
+                    log.info(f"♻️  AI marked already covered: {article.get('title', '')[:70]}")
+                    rejected.append((article, 'already_covered'))
+                    continue
 
             category = r.get('category', 'other')
             if category not in settings.CATEGORIES:
@@ -177,7 +190,7 @@ class AIProcessor:
         return kept, rejected, True
 
     def _gemini_batch(self, articles: List[Dict],
-                      recent_titles: Optional[List[str]] = None) -> Optional[List[Dict]]:
+                      recent_stories: Optional[List[Dict]] = None) -> Optional[List[Dict]]:
         """One batched call, walking the model chain. Returns parsed list or None.
 
         Each model has its own free-tier daily bucket, so a quota error
@@ -185,7 +198,7 @@ class AIProcessor:
         and retrying the same model cannot refill a daily quota. Transient
         errors (503 overload etc.) get one short retry per model.
         """
-        prompt = self._build_prompt(articles, recent_titles)
+        prompt = self._build_prompt(articles, recent_stories)
 
         for model in self.models:
             for attempt in (1, 2):
@@ -241,7 +254,7 @@ class AIProcessor:
         return "\n".join(lines) + "\n"
 
     def _build_prompt(self, articles: List[Dict],
-                      recent_titles: Optional[List[str]] = None) -> str:
+                      recent_stories: Optional[List[Dict]] = None) -> str:
         items = []
         for i, article in enumerate(articles, 1):
             title = article.get('title', '')
@@ -250,9 +263,14 @@ class AIProcessor:
             items.append(f"--- Item {i} ---\nSource: {source}\nTitle: {title}\nContent: {content}")
 
         recent_block = ""
-        if recent_titles:
-            titles = "\n".join(f"- {t}" for t in recent_titles[:MAX_RECENT_TITLES])
-            recent_block = RECENT_BLOCK_TEMPLATE.format(titles=titles)
+        if recent_stories:
+            lines = []
+            for story in recent_stories[:MAX_RECENT_STORIES]:
+                lines.append(f"- {story.get('title', '')}")
+                summary = (story.get('summary') or '').strip()
+                if summary:
+                    lines.append(f"  published: {summary[:MAX_RECENT_SUMMARY_CHARS]}")
+            recent_block = RECENT_BLOCK_TEMPLATE.format(titles="\n".join(lines))
 
         header = PROMPT_HEADER_TEMPLATE.format(
             today=date.today().isoformat(),
