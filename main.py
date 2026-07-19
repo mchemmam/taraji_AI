@@ -118,7 +118,10 @@ def cmd_collect(test_mode=False):
     rss_articles = collect_rss()
     log.info(f"Collected {len(rss_articles)} articles from RSS feeds")
 
-    articles = _dedupe_by_url(google_articles + rss_articles)
+    # RSS first: when the title dedup below drops one of two same-batch
+    # copies, the earlier one survives - and the direct-publisher copy
+    # extracts reliably, unlike a Google News redirect
+    articles = _dedupe_by_url(rss_articles + google_articles)
     log.info(f"Total: {len(articles)} unique articles")
 
     # Drop blocked publishers (e.g. MSN) before any network/AI work - they
@@ -164,17 +167,26 @@ def cmd_collect(test_mode=False):
     # (amp/www variants, syndicated copies) - reject them deterministically
     # before extraction and before any Gemini quota is spent. Cross-language
     # and reworded re-reports still go to the AI's already_covered check.
+    # Only matches against *published* titles get a rejected_urls row: a
+    # same-batch twin must be dropped in memory only, because its URL can be
+    # the very address its surviving copy resolves to - recording it kills
+    # the survivor at the resolved-URL check below (2026-07-19: the Google
+    # News and direct-RSS copies of a Mosaique FM story erased each other
+    # and the story was buried by the permanent rejection).
+    published_titles = set(recent_titles)
     seen_titles = list(recent_titles)
     fresh_articles = []
     with get_db() as db:
         for article in new_articles:
             rereported = find_rereport(article['title'], seen_titles)
-            if rereported:
+            if rereported is None:
+                seen_titles.append(article['title'])
+                fresh_articles.append(article)
+            elif rereported in published_titles:
                 log.info(f"  ♻️  Re-report of \"{rereported[:50]}\": {article['title'][:60]}")
                 db.insert_rejected_url(article['url'], None, 'already_covered')
             else:
-                seen_titles.append(article['title'])
-                fresh_articles.append(article)
+                log.info(f"  👥 Same-batch copy of \"{rereported[:50]}\": {article['title'][:60]}")
     new_articles = fresh_articles
 
     if not new_articles:
