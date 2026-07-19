@@ -2,11 +2,16 @@
 """
 Taraji AI - Main orchestrator script
 """
+import os
 import re
 import sys
 import argparse
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
+
+import requests
 
 # Add current directory to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -20,6 +25,7 @@ from utils import log
 from config import settings
 from storage import init_database, get_db
 from collectors import collect_google_news, collect_rss
+from collectors.google_news import has_arabic
 from processors import (
     create_keyword_filter,
     detect_language,
@@ -78,6 +84,86 @@ def _drop_blocked_sources(articles):
         log.info(f"Dropped {dropped} article(s) from blocked sources "
                  f"({', '.join(settings.SOURCE_BLOCKLIST)})")
     return kept
+
+
+def _domain(url: str) -> str:
+    """Host of a URL, lowercased, without a leading www."""
+    netloc = urlparse(url or '').netloc.lower()
+    return netloc[4:] if netloc.startswith('www.') else netloc
+
+
+def _url_key(url: str) -> str:
+    """URL reduced to host+path for cross-scheme/www comparison."""
+    return _domain(url) + urlparse(url or '').path.rstrip('/')
+
+
+def _ops_alert(text: str):
+    """Telegram ping to the private ops chat, if one is configured.
+
+    Deliberately no fallback to TELEGRAM_CHAT_ID - that is the public
+    channel; degradation alerts must never reach readers. Without
+    TELEGRAM_ALERT_CHAT_ID this is log-only.
+    """
+    token = os.getenv('TELEGRAM_BOT_TOKEN')
+    chat_id = os.getenv('TELEGRAM_ALERT_CHAT_ID')
+    if not (token and chat_id):
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={'chat_id': chat_id, 'text': text},
+            timeout=15,
+        )
+    except Exception as e:
+        log.error(f"Ops alert failed: {e}")
+
+
+def _split_unverified(articles, rss_articles):
+    """Split into (verified, unverified) by publisher-feed corroboration.
+
+    Google News re-serves re-indexed archive pages under fresh pubDates -
+    on 2026-07-19 a months-old Nessma story reached the channels this way
+    (Nessma is bot-walled, so there was no content and no on-page date to
+    judge staleness from). For publishers whose own RSS we already collect,
+    a genuinely fresh story is in their feed this very run; a Google News
+    item absent from it has an unverifiable date and is held back.
+
+    Scoped narrowly: only Google News items, only when extraction produced
+    no on-page date (when it did, _split_stale already judged freshness),
+    and only when the publisher's feed returned items in the article's
+    script this run - so a feed outage or an uncovered language section
+    (e.g. Mosaique's Arabic side vs. its fr-only feed) never mass-rejects.
+    """
+    feed_domains = {_domain(feed['url']) for feed in settings.RSS_FEEDS}
+    feed_batches = {}
+    for item in rss_articles:
+        key = (_domain(item.get('url', '')), has_arabic(item.get('title', '')))
+        batch = feed_batches.setdefault(key, {'urls': set(), 'titles': []})
+        batch['urls'].add(_url_key(item.get('url', '')))
+        batch['titles'].append(item.get('title', ''))
+
+    verified, unverified = [], []
+    for article in articles:
+        resolved = article.get('resolved_url') or article.get('url', '')
+        if (article.get('source_type') != 'google_news'
+                or article.get('page_date')
+                or _domain(resolved) not in feed_domains):
+            verified.append(article)
+            continue
+        batch = feed_batches.get(
+            (_domain(resolved), has_arabic(article.get('title', '')))
+        )
+        if batch is None:
+            verified.append(article)
+            continue
+        if (_url_key(resolved) in batch['urls']
+                or find_rereport(article['title'], batch['titles'])):
+            verified.append(article)
+        else:
+            log.info(f"  🕵️ Google News item absent from {_domain(resolved)}'s "
+                     f"own feed: {article['title'][:70]}")
+            unverified.append(article)
+    return verified, unverified
 
 
 def _split_stale(articles):
@@ -197,6 +283,7 @@ def cmd_collect(test_mode=False):
     log.info("\n[5/7] Extracting article content...")
     extractor = create_content_extractor()
     extracted_count = 0
+    extraction_failures = Counter()
     for article in new_articles:
         url = article.get('url', '')
         if not url:
@@ -211,7 +298,20 @@ def cmd_collect(test_mode=False):
             extracted_count += 1
         else:
             article['resolved_url'] = extractor.resolve_url(url)
+            reason = extractor.last_failure or 'unknown'
+            extraction_failures[f"{_domain(article['resolved_url'])} ({reason})"] += 1
     log.info(f"Extracted content from {extracted_count}/{len(new_articles)} articles")
+    if extraction_failures:
+        breakdown = ", ".join(f"{key} ×{count}"
+                              for key, count in extraction_failures.most_common())
+        log.warning(f"⚠️  Extraction failures: {breakdown}")
+        # A mostly-unreadable batch means the stale guards are running blind
+        # (title-only publishes, no on-page dates): extraction quietly
+        # collapsed from 28/34 to 1/4 over 2026-07-15..19 before anyone
+        # noticed. Ping the private ops chat, never the public channel.
+        if extracted_count * 2 < len(new_articles) and len(new_articles) >= 2:
+            _ops_alert(f"⚠️ Taraji AI: extraction degraded - only {extracted_count}/"
+                       f"{len(new_articles)} articles readable this run ({breakdown})")
 
     # Blocked publishers can hide behind a Google News attribution and only
     # reveal themselves (msn.com) once the redirect is resolved - drop those too
@@ -225,6 +325,7 @@ def cmd_collect(test_mode=False):
     # before any AI budget is spent. Rejections are remembered so the same
     # URLs are not re-extracted and re-judged on every scheduled run.
     new_articles, stale_articles = _split_stale(new_articles)
+    new_articles, unverified_articles = _split_unverified(new_articles, rss_articles)
     rival_articles = []
     kept_articles = []
     for article in new_articles:
@@ -236,6 +337,10 @@ def cmd_collect(test_mode=False):
     new_articles = kept_articles
 
     rejects = [(a, f"stale: page dated {a.get('page_date')}") for a in stale_articles]
+    # Bare 'unverified_date' (no detail suffix): the reason string must match
+    # the TTL clause in get_existing_urls, which lets these expire like
+    # 'irrelevant' - the verdict reflects one feed snapshot, not a fact
+    rejects += [(a, 'unverified_date') for a in unverified_articles]
     rejects += rival_articles
     if rejects:
         with get_db() as db:
@@ -245,7 +350,7 @@ def cmd_collect(test_mode=False):
                     article['url'], article.get('resolved_url'), reason
                 )
     if not new_articles:
-        log.info("All new articles were stale or rival-club content.")
+        log.info("All new articles were stale, date-unverified or rival-club content.")
         return
 
     # Same story can arrive via different collected URLs (Google News + RSS);

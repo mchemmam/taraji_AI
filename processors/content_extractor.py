@@ -23,14 +23,19 @@ class ContentExtractor:
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
         )
+        # Why the last extract() call failed ('HTTP 403', 'timeout', ...);
+        # None after a success. Callers use it for per-run failure summaries.
+        self.last_failure = None
 
     def extract(self, url: str) -> Optional[Dict]:
         """
         Extract article content from a URL.
 
         Returns a dict with 'text', 'top_image', 'resolved_url',
-        'extraction_method' — or None if extraction failed.
+        'extraction_method' — or None if extraction failed, with the reason
+        left in self.last_failure.
         """
+        self.last_failure = None
         resolved_url = self.resolve_url(url)
 
         result = self._extract_with_trafilatura(resolved_url)
@@ -39,7 +44,12 @@ class ContentExtractor:
             log.debug(f"✅ Extracted {len(result['text'])} chars from: {resolved_url[:80]}")
             return result
 
-        log.debug(f"❌ Failed to extract content from: {resolved_url[:80]}")
+        # WARNING, not debug: silent extraction failures left the stale
+        # guards blind for days - a bot-walled page publishes title-only,
+        # with no on-page date and nothing for the AI to judge staleness
+        # from (2026-07-19 Nessma/Cloudflare incident)
+        log.warning(f"⚠️  Extraction failed ({self.last_failure or 'unknown'}): "
+                    f"{resolved_url[:100]}")
         return None
 
     def resolve_url(self, url: str) -> str:
@@ -57,14 +67,17 @@ class ContentExtractor:
             decoded = gnewsdecoder(url, interval=1)
             if decoded.get('status') and decoded.get('decoded_url'):
                 return decoded['decoded_url']
-            log.debug(f"gnewsdecoder could not decode: {decoded.get('message', 'unknown error')}")
+            log.info(f"gnewsdecoder could not decode: {decoded.get('message', 'unknown error')}")
         except Exception as e:
-            log.debug(f"gnewsdecoder failed for {url[:80]}: {e}")
+            log.info(f"gnewsdecoder failed for {url[:80]}: {e}")
 
         return url
 
     def _extract_with_trafilatura(self, url: str) -> Optional[Dict]:
-        """Download the page and extract the main article text and image."""
+        """Download the page and extract the main article text and image.
+
+        On failure returns None and records why in self.last_failure.
+        """
         try:
             headers = {'User-Agent': self.user_agent}
             response = requests.get(url, headers=headers, timeout=self.timeout)
@@ -76,7 +89,11 @@ class ContentExtractor:
                 include_tables=False,
             )
 
-            if not text or len(text) < settings.MIN_ARTICLE_LENGTH:
+            if not text:
+                self.last_failure = 'no text extracted'
+                return None
+            if len(text) < settings.MIN_ARTICLE_LENGTH:
+                self.last_failure = f'text under {settings.MIN_ARTICLE_LENGTH} chars'
                 return None
 
             metadata = trafilatura.extract_metadata(response.text)
@@ -92,8 +109,14 @@ class ContentExtractor:
                 'extraction_method': 'trafilatura',
             }
 
+        except requests.exceptions.HTTPError as e:
+            self.last_failure = f'HTTP {e.response.status_code}'
+            return None
+        except requests.exceptions.Timeout:
+            self.last_failure = 'timeout'
+            return None
         except Exception as e:
-            log.debug(f"Trafilatura extraction failed for {url[:80]}: {e}")
+            self.last_failure = f'{type(e).__name__}: {str(e)[:80]}'
             return None
 
 

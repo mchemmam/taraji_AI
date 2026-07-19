@@ -160,7 +160,8 @@ GEMINI_MODELS = [
 
 # A flaky AI "irrelevant" verdict must not blacklist a fresh URL forever
 # (2026-07-18: a legit "Diarra signs for EST" story was lost this way).
-# 'irrelevant' rejections are re-judged after this many hours; stale/
+# 'irrelevant' and 'unverified_date' rejections (one stochastic AI call /
+# one publisher-feed snapshot) are re-judged after this many hours; stale/
 # duplicate/already_covered rejections stay permanent - re-judging can't
 # change those.
 IRRELEVANT_REJECTION_TTL_HOURS = 6

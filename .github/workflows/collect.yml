@@ -39,6 +39,12 @@ jobs:
       - name: Collect news
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Degradation alerts (e.g. extraction collapse) go to the private
+          # ops chat only; without TELEGRAM_ALERT_CHAT_ID they are log-only.
+          # Deliberately NOT the `|| secrets.TELEGRAM_CHAT_ID` fallback used
+          # for job-failure alerts - that is the public channel.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALERT_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID }}
         run: python main.py collect
 
       - name: Distribute to Telegram and Facebook

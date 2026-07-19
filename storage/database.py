@@ -258,11 +258,13 @@ class Database:
         """Return the subset of given URLs already seen - stored as articles
         or rejected (matched against collected and resolved URLs).
 
-        'irrelevant' rejections expire after IRRELEVANT_REJECTION_TTL_HOURS:
-        that verdict comes from a single stochastic AI call and has wrongly
-        buried legitimate stories, so a fresh URL gets re-judged. All other
-        rejection reasons (stale/duplicate/already_covered) are facts that a
-        re-run cannot change and stay permanent.
+        'irrelevant' and 'unverified_date' rejections expire after
+        IRRELEVANT_REJECTION_TTL_HOURS: the first verdict comes from a
+        single stochastic AI call, the second from one publisher-feed
+        snapshot - both have wrongly buried legitimate stories, so a fresh
+        URL gets re-judged. All other rejection reasons
+        (stale/duplicate/already_covered) are facts that a re-run cannot
+        change and stay permanent.
         """
         existing = set()
         cursor = self.conn.cursor()
@@ -277,7 +279,7 @@ class Database:
                 if table == 'rejected_urls':
                     # rejected_date is CURRENT_TIMESTAMP, i.e. UTC
                     not_expired = f"""
-                    AND NOT (reason = 'irrelevant'
+                    AND NOT (reason IN ('irrelevant', 'unverified_date')
                              AND rejected_date < datetime('now', '-{ttl_hours} hours'))"""
                 cursor.execute(f"""
                     SELECT url, resolved_url FROM {table}
