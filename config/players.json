@@ -1,16 +1,16 @@
 {
-  "_doc": "Players monitored beyond club-name coverage. 'squad' = current EST players on departure watch; 'targets' = reported EST transfer targets. 'name' + 'name_ar' are used as Google News queries; matching also uses 'aliases' (alternate spellings seen in the press). 'note' is injected into the Gemini prompt for namesake disambiguation - keep it short and update it when a player moves. Optional 'extra_searches' adds per-player searches in foreign Google News editions (query/language/country) for players whose market lives outside the en/fr/ar editions - scope the query with a context word when the bare name is ambiguous in that market.",
+  "_doc": "Players monitored beyond club-name coverage. 'squad' = current EST players on departure watch; 'targets' = reported EST transfer targets. 'name' + 'name_ar' are used as Google News queries; matching also uses 'aliases' (alternate spellings seen in the press, plus surname-only forms when the surname is distinctive - headlines often drop the first name: 'Offre saoudienne pour Diakité'; keep surname-only aliases OFF common surnames like Keita/Diarra/Ben Said/Ribeiro, they pull in namesakes). 'note' is injected into the Gemini prompt for namesake disambiguation - keep it short and update it when a player moves. Optional 'extra_searches' adds per-player searches in foreign Google News editions (query/language/country) for players whose market lives outside the en/fr/ar editions - scope the query with a context word when the bare name is ambiguous in that market.",
   "targets": [
     {
       "name": "Adel Bettaieb",
       "name_ar": "عادل بالطيب",
-      "aliases": ["عادل بطيب"],
+      "aliases": ["عادل بطيب", "Bettaieb"],
       "note": "French-born Tunisian forward, free agent (ex-Argeș Pitești) - reported EST target"
     },
     {
       "name": "Hazem Mastouri",
       "name_ar": "حازم المستوري",
-      "aliases": ["حازم مستوري"],
+      "aliases": ["حازم مستوري", "Mastouri", "مستوري"],
       "note": "Tunisian international striker at Dynamo Makhachkala (Russia) - reported EST target"
     },
     {
@@ -26,7 +26,7 @@
     {
       "name": "Samy Chouchane",
       "name_ar": "سامي شوشان",
-      "aliases": ["Sami Chouchane"],
+      "aliases": ["Sami Chouchane", "Chouchane", "شوشان"],
       "note": "French-born Tunisian midfielder at Dijon FCO - reported EST target"
     }
   ],
@@ -34,19 +34,19 @@
     {
       "name": "Elias Mokwana",
       "name_ar": "إلياس موكوانا",
-      "aliases": ["الياس موكوانا", "Elias Mokawana"],
+      "aliases": ["الياس موكوانا", "Elias Mokawana", "Mokwana", "موكوانا"],
       "note": "South African winger owned by EST, on loan at Al-Hazem (Saudi Arabia)"
     },
     {
       "name": "Kouceila Boualia",
       "name_ar": "كوسيلة بوعالية",
-      "aliases": ["كسيلة بوعالية", "Koussaila Boualia"],
+      "aliases": ["كسيلة بوعالية", "Koussaila Boualia", "Boualia", "بوعالية"],
       "note": "Algerian winger at EST, reportedly transfer-listed"
     },
     {
       "name": "Mohamed Amine Tougai",
       "name_ar": "محمد أمين توقاي",
-      "aliases": ["محمد أمين توغاي", "Mohamed Amine Tougaï"],
+      "aliases": ["محمد أمين توغاي", "Mohamed Amine Tougaï", "Tougai", "Tougaï", "توقاي", "توغاي"],
       "note": "Algerian international centre-back at EST"
     },
     {
@@ -70,19 +70,19 @@
     {
       "name": "Aboubacar Diakite",
       "name_ar": "أبو بكر دياكيتي",
-      "aliases": ["أبوبكر دياكيتي", "Aboubacar Diakité"],
+      "aliases": ["أبوبكر دياكيتي", "Aboubacar Diakité", "Diakité", "Diakite", "دياكيتي"],
       "note": "Malian centre-forward at EST"
     },
     {
       "name": "Elyas Bouzaiene",
       "name_ar": "إلياس بوزيان",
-      "aliases": ["الياس بوزيان", "Elias Bouzaiene"],
+      "aliases": ["الياس بوزيان", "Elias Bouzaiene", "Bouzaiene"],
       "note": "Swedish-born Tunisian right-back at EST"
     },
     {
       "name": "Mohamed Mouhli",
       "name_ar": "محمد موحلي",
-      "aliases": ["محمد الموحلي"],
+      "aliases": ["محمد الموحلي", "Mouhli", "موحلي"],
       "note": "Belgian-Tunisian attacking midfielder at EST"
     }
   ]

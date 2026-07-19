@@ -38,6 +38,12 @@ class KeywordFilter:
             for keyword in self.contextual_keywords
         }
 
+        # Exact keywords with an all-caps token ("EST Tunis", "ES Tunis")
+        # need the same strictness: as lowercase substrings they hide inside
+        # ordinary French ("l'équipe est tunisienne", "les tunisiens").
+        self._exact_matchers = self._compile_matchers(self.exact_keywords)
+        self._ambiguous_matchers = self._compile_matchers(self.ambiguous_keywords)
+
         # Monitored player names (squad departure watch + transfer targets):
         # (lowercased variant, canonical name) pairs for substring matching
         self.player_keywords = [
@@ -59,7 +65,26 @@ class KeywordFilter:
         return all_kw
 
     @staticmethod
-    def _match_exact(keywords_by_lang: dict, text_lower: str,
+    def _compile_matchers(keywords_by_lang: dict) -> dict:
+        """Per-language (keyword, pattern) pairs for _match_exact.
+
+        Keywords containing an all-caps token get a whole-word,
+        case-sensitive pattern; all others keep substring matching
+        (pattern None).
+        """
+        compiled = {}
+        for lang, keywords in keywords_by_lang.items():
+            pairs = []
+            for keyword in keywords:
+                if any(len(tok) >= 2 and tok.isupper() for tok in keyword.split()):
+                    pairs.append((keyword, re.compile(rf'\b{re.escape(keyword)}\b')))
+                else:
+                    pairs.append((keyword, None))
+            compiled[lang] = pairs
+        return compiled
+
+    @staticmethod
+    def _match_exact(matchers_by_lang: dict, text: str, text_lower: str,
                      language: str) -> Optional[str]:
         """Return the first keyword found in the text.
 
@@ -67,13 +92,16 @@ class KeywordFilter:
         otherwise.
         """
         if language == 'unknown':
-            languages = list(keywords_by_lang.keys())
+            languages = list(matchers_by_lang.keys())
         else:
-            languages = [language] if language in keywords_by_lang else []
+            languages = [language] if language in matchers_by_lang else []
 
         for lang in languages:
-            for keyword in keywords_by_lang[lang]:
-                if keyword.lower() in text_lower:
+            for keyword, pattern in matchers_by_lang[lang]:
+                if pattern is not None:
+                    if pattern.search(text):
+                        return keyword
+                elif keyword.lower() in text_lower:
                     return keyword
         return None
 
@@ -97,7 +125,7 @@ class KeywordFilter:
         # not veto them, or derby coverage ("Espérance de Tunis bat le Club
         # Africain") gets dropped. False positives that slip through here are
         # caught by the AI relevance check downstream.
-        matched = self._match_exact(self.exact_keywords, text_lower, language)
+        matched = self._match_exact(self._exact_matchers, text, text_lower, language)
         if matched:
             log.info(f"✅ Matched exact keyword: {matched}")
             return True, matched
@@ -118,7 +146,7 @@ class KeywordFilter:
 
         # Step 4: Ambiguous short names (bare "الترجي" is also a substring of
         # "الترجي الجرجيسي"/Zarzis) - only valid once negatives had their say
-        matched = self._match_exact(self.ambiguous_keywords, text_lower, language)
+        matched = self._match_exact(self._ambiguous_matchers, text, text_lower, language)
         if matched:
             log.info(f"✅ Matched exact keyword: {matched}")
             return True, matched
@@ -184,7 +212,9 @@ class KeywordFilter:
                 article['matched_keyword'] = matched_keyword
                 filtered.append(article)
             else:
-                log.debug(f"  ❌ Article {i} filtered out")
+                # INFO, not debug: silent drops made a GNET "ES Tunis" story
+                # undiagnosable (2026-07-19) - the title is the only trace
+                log.info(f"  ❌ Article {i} dropped by keyword filter: {title[:90]}")
 
         log.info(f"Filtered {len(articles)} articles → {len(filtered)} relevant")
         return filtered
