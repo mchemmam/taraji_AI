@@ -49,7 +49,7 @@ For EACH numbered item below, return a JSON object with:
 - "stale": true if the item rehashes an already-concluded event rather than reporting new information — e.g. a fixture/broadcast/replay listing page for a match played long ago, or an aggregator republishing an old story under a refreshed date. Judge this from the actual event described in the content (compare it against today's date), not from the item's claimed publish date - sources sometimes fake freshness. false if it's genuinely new information.
 - "duplicate_of": the id (integer) of an EARLIER item in this batch that covers the same story, or null. Two items cover the same story when a reader learns nothing new from the second one - the same event reported by another source or in another language. A follow-up that adds new information is NOT a duplicate. When a later item duplicates an earlier one but mentions extra material details, still mark it as a duplicate - and fold those details into the EARLIER item's summaries.
 - "already_covered": true if the item covers the same story as one in the "Recently covered stories" list above - the same event, whatever the source or language. false otherwise, or if no list was given.
-- "update_details": only meaningful when "already_covered" is true, otherwise null. Compare the item against that story's published summary: if the item contains MATERIAL new facts absent from what our readers were already told - a fee or amount, contract terms, an official confirmation or denial, a completed signing, a medical verdict, a fixed date - set this to a one-line description of what is new. Reworded speculation, opinion, extra background, or the same facts from another outlet are NOT new details: leave it null.
+- "update_details": only meaningful when "already_covered" is true, otherwise null. Almost always null - set it only rarely. Set it ONLY when this item is a decisive, one-time escalation of a story our readers already know: (a) a transfer/signing reported before as a rumor or ongoing negotiation is now an OFFICIAL, confirmed, done deal, or (b) a concrete fee/amount is disclosed for the FIRST time. Before setting it, scan EVERY line of the "Recently covered stories" list, not just one - especially any line already framed "Mise à jour :"/"تحديث:": if any of them already conveys this same development, fee, or confirmation, then it is NOT new, leave it null (we already posted it). These are NOT updates, leave null: another outlet reporting the same thing, a reworded rumor, a farewell/tribute/reaction/thank-you message, a player interview about an already-known move, a suspension/disciplinary side-note, or "officially announced/confirmed" when the agreement or fee was already reported. When unsure, use null.
 - "category": one of "match", "transfer", "injury", "statement", "finance", "other"
 - "summary_fr": a factual 2-3 sentence summary in French, focused on facts concerning Espérance Sportive de Tunis (or, for an item about a monitored player, on that player). When "update_details" is set, start with "Mise à jour :" and focus on the NEW facts, recalling the covered story in half a sentence at most.
 - "summary_ar": the same summary in Arabic (when "update_details" is set, start with "تحديث:").
@@ -166,7 +166,17 @@ class AIProcessor:
             if r.get('already_covered', False):
                 update = r.get('update_details')
                 update = update.strip() if isinstance(update, str) else ''
-                if update and update.lower() not in ('null', 'none'):
+                has_update = bool(update) and update.lower() not in ('null', 'none')
+                # An update judgment needs the article body: when extraction
+                # failed the model saw only the title and cannot tell a
+                # material new fact from a reworded headline, so title-only
+                # "updates" were pure noise (2026-07: several empty Mosaique/
+                # Nessma re-reports posted as "Mise à jour"). Require content.
+                if has_update and not (article.get('content') or '').strip():
+                    log.info(f"♻️  Update suppressed (title-only, no content): "
+                             f"{article.get('title', '')[:70]}")
+                    has_update = False
+                if has_update:
                     log.info(f"🔄 Update to a covered story ({update[:70]}): "
                              f"{article.get('title', '')[:70]}")
                     article['is_update'] = True

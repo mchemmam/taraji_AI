@@ -5,6 +5,7 @@ Decodes Google News redirect URLs (news.google.com/rss/articles/...) into the
 real article URL, then extracts the main text with trafilatura.
 """
 from typing import Optional, Dict
+from urllib.parse import urlparse, urlunparse
 
 import requests
 import trafilatura
@@ -73,6 +74,39 @@ class ContentExtractor:
 
         return url
 
+    @staticmethod
+    def _fetch_url(url: str) -> str:
+        """URL to actually download, which may differ from the canonical one.
+
+        mosaiquefm.net/ar/... and /fr/... return HTTP 200 whose article body
+        is JS-rendered - trafilatura gets ~18 chars. The /amp/ mirror of the
+        same path is server-rendered and extracts cleanly, so we fetch that.
+        The canonical URL is still what gets stored and linked to readers.
+        """
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        if host.endswith('mosaiquefm.net') and not parsed.path.startswith('/amp/'):
+            return urlunparse(parsed._replace(path='/amp' + parsed.path))
+        return url
+
+    @staticmethod
+    def _best_text(html: str) -> Optional[str]:
+        """Main article text, retrying with favor_recall if the default is thin.
+
+        Trafilatura's precision-first default misses the body on some
+        publishers (Nessma: 254 chars default vs. 958 with favor_recall).
+        Only pay for the second parse when the first comes back empty/short,
+        then keep whichever pass returned more text.
+        """
+        text = trafilatura.extract(html, include_comments=False, include_tables=False)
+        if text and len(text) >= settings.MIN_ARTICLE_LENGTH:
+            return text
+        recall = trafilatura.extract(html, include_comments=False,
+                                     include_tables=False, favor_recall=True)
+        if recall and (not text or len(recall) > len(text)):
+            return recall
+        return text
+
     def _extract_with_trafilatura(self, url: str) -> Optional[Dict]:
         """Download the page and extract the main article text and image.
 
@@ -80,14 +114,10 @@ class ContentExtractor:
         """
         try:
             headers = {'User-Agent': self.user_agent}
-            response = requests.get(url, headers=headers, timeout=self.timeout)
+            response = requests.get(self._fetch_url(url), headers=headers, timeout=self.timeout)
             response.raise_for_status()
 
-            text = trafilatura.extract(
-                response.text,
-                include_comments=False,
-                include_tables=False,
-            )
+            text = self._best_text(response.text)
 
             if not text:
                 self.last_failure = 'no text extracted'
