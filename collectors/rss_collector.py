@@ -6,10 +6,21 @@ from typing import List, Dict
 import time
 
 import feedparser
+import requests
 
 from .base_collector import BaseCollector
 from utils import log, clean_text, parse_date
 from config import settings
+
+# feedparser fetches URLs itself with NO timeout - one hung feed server
+# would stall the whole run until the workflow's 15-minute kill (and a
+# false failure alert). Download explicitly instead and hand feedparser
+# the bytes; it sniffs the encoding from the XML declaration.
+FEED_TIMEOUT = 15
+FEED_USER_AGENT = (
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
+)
 
 
 class RSSCollector(BaseCollector):
@@ -36,8 +47,13 @@ class RSSCollector(BaseCollector):
             log.info(f"Fetching RSS feed: {feed_name} ({feed_lang})")
 
             try:
-                # Parse RSS feed
-                feed = feedparser.parse(feed_url)
+                # Fetch with a timeout, then parse (see FEED_TIMEOUT above)
+                response = requests.get(
+                    feed_url, timeout=FEED_TIMEOUT,
+                    headers={'User-Agent': FEED_USER_AGENT},
+                )
+                response.raise_for_status()
+                feed = feedparser.parse(response.content)
 
                 if not feed.entries:
                     log.warning(f"⚠️  No entries in feed: {feed_name}")

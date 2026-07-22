@@ -2,12 +2,22 @@
 Database operations for Taraji AI
 """
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import json
 
 from config import settings
+
+
+def _utcnow() -> datetime:
+    """Naive UTC now, comparable to the DB's CURRENT_TIMESTAMP values.
+
+    Every DEFAULT CURRENT_TIMESTAMP column stores naive UTC. datetime.now()
+    only matched it because GitHub runners run on UTC; on a CEST laptop
+    every recency window was silently shifted by two hours.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Database:
@@ -335,7 +345,7 @@ class Database:
         guard) are terminal like 'success'; only 'failed' sends are retried.
         """
         cursor = self.conn.cursor()
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = _utcnow() - timedelta(hours=hours)
 
         cursor.execute("""
             SELECT * FROM articles a
@@ -380,7 +390,7 @@ class Database:
     def get_recent_articles(self, hours: int = 24, limit: int = 100) -> List[Dict]:
         """Get articles from the last N hours"""
         cursor = self.conn.cursor()
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = _utcnow() - timedelta(hours=hours)
 
         cursor.execute("""
             SELECT * FROM articles
@@ -395,7 +405,7 @@ class Database:
     def get_articles_by_category(self, category: str, days: int = 7) -> List[Dict]:
         """Get articles by category from the last N days"""
         cursor = self.conn.cursor()
-        cutoff = datetime.now() - timedelta(days=days)
+        cutoff = _utcnow() - timedelta(days=days)
 
         cursor.execute("""
             SELECT * FROM articles
@@ -426,7 +436,7 @@ class Database:
         total = cursor.fetchone()['total']
 
         # Articles last 24h
-        cutoff_24h = datetime.now() - timedelta(hours=24)
+        cutoff_24h = _utcnow() - timedelta(hours=24)
         cursor.execute("""
             SELECT COUNT(*) as count FROM articles
             WHERE collected_date >= ?
@@ -434,7 +444,7 @@ class Database:
         last_24h = cursor.fetchone()['count']
 
         # Articles last 7 days
-        cutoff_7d = datetime.now() - timedelta(days=7)
+        cutoff_7d = _utcnow() - timedelta(days=7)
         cursor.execute("""
             SELECT COUNT(*) as count FROM articles
             WHERE collected_date >= ?
@@ -499,7 +509,7 @@ class Database:
         Returns (articles_pruned, rejected_urls_dropped).
         """
         cursor = self.conn.cursor()
-        cutoff = datetime.now() - timedelta(days=days)
+        cutoff = _utcnow() - timedelta(days=days)
 
         cursor.execute("""
             UPDATE articles
@@ -522,7 +532,7 @@ class Database:
     def cleanup_old_articles(self, days: int = 90):
         """Delete articles older than N days"""
         cursor = self.conn.cursor()
-        cutoff = datetime.now() - timedelta(days=days)
+        cutoff = _utcnow() - timedelta(days=days)
 
         cursor.execute("""
             DELETE FROM articles

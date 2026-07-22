@@ -17,13 +17,12 @@ import json
 import os
 import time
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 
 from utils import log
 from config import settings
 from config.players import load_players
-from .classifier import create_classifier
 
 try:
     from google import genai
@@ -31,6 +30,16 @@ try:
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
+
+
+def _utcnow() -> datetime:
+    """Naive UTC now, comparable to the DB's CURRENT_TIMESTAMP values.
+
+    collected_date is stored as naive UTC. datetime.now() only matched it
+    because GitHub runners run on UTC; on a CEST laptop the update cooldown
+    was silently computed two hours short.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # Max characters of article content sent to the model per article
@@ -81,7 +90,6 @@ class AIProcessor:
         self.client = None
         self.requests_made = 0
         self.last_model_used = None
-        self._fallback_classifier = create_classifier()
         self._players_block = self._build_players_block()
 
         if not GENAI_AVAILABLE:
@@ -142,14 +150,18 @@ class AIProcessor:
 
         kept = []
         rejected = []
+        deferred = 0
         for i, article in enumerate(articles, 1):
             r = by_id.get(i)
             if r is None:
-                # Model skipped this item - keep it with fallback processing
-                article['relevant'] = True
-                article['category'] = self._fallback_classify(article)
-                article['summary'] = self._extractive_summary(article)
-                kept.append(article)
+                # No verdict for this item (model truncated or mis-numbered
+                # its output). Publishing it unjudged would re-open the
+                # 2026-07-16 fail-open hole (wrong-club posts), so defer it:
+                # neither kept nor rejected, the URL stays unknown and is
+                # re-collected and re-judged on the next run.
+                deferred += 1
+                log.warning(f"⏭️  No AI verdict for item {i} - deferred: "
+                            f"{article.get('title', '')[:70]}")
                 continue
 
             if not r.get('relevant', True):
@@ -211,7 +223,7 @@ class AIProcessor:
                     # cooldown window instead of founding a new story.
                     if story_key:
                         article['story_key'] = story_key
-                        story_posted_at[story_key] = datetime.now()
+                        story_posted_at[story_key] = _utcnow()
                 else:
                     log.info(f"♻️  AI marked already covered: {article.get('title', '')[:70]}")
                     rejected.append((article, 'already_covered'))
@@ -231,7 +243,8 @@ class AIProcessor:
             article.setdefault('story_key', uuid.uuid4().hex)
             kept.append(article)
 
-        log.info(f"AI processing: {len(articles)} articles → {len(kept)} relevant")
+        log.info(f"AI processing: {len(articles)} articles → {len(kept)} relevant"
+                 + (f" ({deferred} deferred without verdict)" if deferred else ""))
         return kept, rejected, True
 
     def _gemini_batch(self, articles: List[Dict],
@@ -349,7 +362,7 @@ class AIProcessor:
         last = story_posted_at.get(story_key)
         if last is None:
             return None
-        elapsed = datetime.now() - last
+        elapsed = _utcnow() - last
         window = timedelta(hours=settings.UPDATE_COOLDOWN_HOURS)
         if elapsed >= window:
             return None
@@ -380,11 +393,6 @@ class AIProcessor:
             recent_block=recent_block,
         )
         return header + "\n\n".join(items)
-
-    def _fallback_classify(self, article: Dict) -> str:
-        title = article.get('title', '')
-        content = article.get('content') or article.get('description') or ''
-        return self._fallback_classifier.classify(title, content)
 
     def _extractive_summary(self, article: Dict, max_sentences: int = 3) -> str:
         """Fallback: first sentences of the content/description."""

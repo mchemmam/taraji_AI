@@ -1,6 +1,6 @@
 # Taraji AI — Roadmap
 
-Ideas parked here so they don't get lost. Constraint for everything: **$0/month** — free tiers only (GitHub Actions/Pages, Gemini free tier ~250 req/day, Telegram Bot API, cron-job.org). Design rule that keeps us inside the Gemini quota: **at most one batched AI call per collection run** — new features should ride that existing call, or add at most one call per day.
+Ideas parked here so they don't get lost. Constraint for everything: **$0/month** — free tiers only (GitHub Actions/Pages, Gemini free tier ~20 req/day *per model* — hence the model chain in `settings.GEMINI_MODELS`; verified live 2026-07-18, Telegram Bot API, cron-job.org). Design rule that keeps us inside the Gemini quota: **at most one batched AI call per collection run** — new features should ride that existing call, or add at most one call per day.
 
 ## Shipped
 
