@@ -237,8 +237,12 @@ def cmd_collect(test_mode=False):
         # re-report filter below, title + published summary for the AI's
         # already-covered/update judgment (the summary is what our readers
         # actually saw - the only basis for "does this add anything new?")
+        # story_key groups the original post and its later updates; rows
+        # predating the column fall back to their own id, i.e. one story each.
         recent_stories = [
-            {'title': a['title'], 'summary': a.get('summary')}
+            {'title': a['title'], 'summary': a.get('summary'),
+             'story_key': a.get('story_key') or f"id:{a['id']}",
+             'collected_date': a.get('collected_date')}
             for a in db.get_recent_articles(hours=48, limit=40)
         ]
         recent_titles = [s['title'] for s in recent_stories]

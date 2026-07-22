@@ -16,7 +16,8 @@ unfiltered) put five wrong-club articles on the live channels on
 import json
 import os
 import time
-from datetime import date
+import uuid
+from datetime import date, datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 
 from utils import log
@@ -49,7 +50,8 @@ For EACH numbered item below, return a JSON object with:
 - "stale": true if the item rehashes an already-concluded event rather than reporting new information — e.g. a fixture/broadcast/replay listing page for a match played long ago, or an aggregator republishing an old story under a refreshed date. Judge this from the actual event described in the content (compare it against today's date), not from the item's claimed publish date - sources sometimes fake freshness. false if it's genuinely new information.
 - "duplicate_of": the id (integer) of an EARLIER item in this batch that covers the same story, or null. Two items cover the same story when a reader learns nothing new from the second one - the same event reported by another source or in another language. A follow-up that adds new information is NOT a duplicate. When a later item duplicates an earlier one but mentions extra material details, still mark it as a duplicate - and fold those details into the EARLIER item's summaries.
 - "already_covered": true if the item covers the same story as one in the "Recently covered stories" list above - the same event, whatever the source or language. false otherwise, or if no list was given.
-- "update_details": only meaningful when "already_covered" is true, otherwise null. Almost always null - set it only rarely. Set it ONLY when this item is a decisive, one-time escalation of a story our readers already know: (a) a transfer/signing reported before as a rumor or ongoing negotiation is now an OFFICIAL, confirmed, done deal, or (b) a concrete fee/amount is disclosed for the FIRST time. Before setting it, scan EVERY line of the "Recently covered stories" list, not just one - especially any line already framed "Mise à jour :"/"تحديث:": if any of them already conveys this same development, fee, or confirmation, then it is NOT new, leave it null (we already posted it). These are NOT updates, leave null: another outlet reporting the same thing, a reworded rumor, a farewell/tribute/reaction/thank-you message, a player interview about an already-known move, a suspension/disciplinary side-note, or "officially announced/confirmed" when the agreement or fee was already reported. When unsure, use null.
+- "covers": only meaningful when "already_covered" is true, otherwise null. The tag number of the story it covers, as an integer (for "[S7]" return 7). If it continues several, give the most recent one - the lowest number, since the list is newest first.
+- "update_details": only meaningful when "already_covered" is true, otherwise null. Set it when this item carries a material new development in that story - something a reader who saw our earlier post still does not know: a rumored or negotiated move becoming OFFICIAL, a concrete fee/amount, a medical/signing date, a contract length, a collapse or U-turn. Before setting it, scan EVERY line of the "Recently covered stories" list, not just one - especially any line already framed "Mise à jour :"/"تحديث:": if any of them already conveys this same development, then it is NOT new, leave it null (we already posted it). These are NOT updates, leave null: another outlet reporting the same thing, a reworded rumor with no new fact, a farewell/tribute/reaction/thank-you message, a player interview about an already-known move, or a pure opinion/preview piece. When unsure, use null.
 - "category": one of "match", "transfer", "injury", "statement", "finance", "other"
 - "summary_fr": a factual 2-3 sentence summary in French, focused on facts concerning Espérance Sportive de Tunis (or, for an item about a monitored player, on that player). When "update_details" is set, start with "Mise à jour :" and focus on the NEW facts, recalling the covered story in half a sentence at most.
 - "summary_ar": the same summary in Arabic (when "update_details" is set, start with "تحديث:").
@@ -60,7 +62,7 @@ Items:
 """
 
 RECENT_BLOCK_TEMPLATE = """
-Recently covered stories (already published - for the "already_covered" and "update_details" fields). Each "published:" line is exactly what our readers were told:
+Recently covered stories (already published - for the "already_covered", "covers" and "update_details" fields), each tagged [S1], [S2], ... Each "published:" line is exactly what our readers were told:
 {titles}
 """
 
@@ -132,6 +134,11 @@ class AIProcessor:
                 except (TypeError, ValueError):
                     continue
 
+        # When each running story was last posted about, keyed by story_key.
+        # Updated in the loop below so two updates to the same story inside
+        # one batch can't both land.
+        story_posted_at = self._story_posted_at(recent_stories)
+
         kept = []
         rejected = []
         for i, article in enumerate(articles, 1):
@@ -176,10 +183,26 @@ class AIProcessor:
                     log.info(f"♻️  Update suppressed (title-only, no content): "
                              f"{article.get('title', '')[:70]}")
                     has_update = False
+                # One update per story per cooldown window: a hot saga always
+                # supplies another "material" angle, so materiality alone
+                # never converges (Tougaï produced 8 posts in 3 days).
+                story_key = self._covered_story_key(r, recent_stories)
+                if has_update:
+                    blocked_for = self._cooldown_remaining(story_key, story_posted_at)
+                    if blocked_for is not None:
+                        log.info(f"♻️  Update suppressed ({blocked_for:.1f}h left of "
+                                 f"{settings.UPDATE_COOLDOWN_HOURS}h story cooldown): "
+                                 f"{article.get('title', '')[:70]}")
+                        has_update = False
                 if has_update:
                     log.info(f"🔄 Update to a covered story ({update[:70]}): "
                              f"{article.get('title', '')[:70]}")
                     article['is_update'] = True
+                    # Inherit the story's key so this post starts the next
+                    # cooldown window instead of founding a new story.
+                    if story_key:
+                        article['story_key'] = story_key
+                        story_posted_at[story_key] = datetime.now()
                 else:
                     log.info(f"♻️  AI marked already covered: {article.get('title', '')[:70]}")
                     rejected.append((article, 'already_covered'))
@@ -194,6 +217,9 @@ class AIProcessor:
             article['summary'] = (r.get('summary_fr') or r.get('summary')
                                   or self._extractive_summary(article))
             article['summary_ar'] = r.get('summary_ar')
+            # A brand-new story founds its own group; updates already
+            # inherited the key of the story they continue.
+            article.setdefault('story_key', uuid.uuid4().hex)
             kept.append(article)
 
         log.info(f"AI processing: {len(articles)} articles → {len(kept)} relevant")
@@ -263,6 +289,63 @@ class AIProcessor:
             lines += [f"- {p['name']} ({p['note']})" for p in players['targets']]
         return "\n".join(lines) + "\n"
 
+    @staticmethod
+    def _story_posted_at(recent_stories: Optional[List[Dict]]) -> Dict[str, datetime]:
+        """Newest publication time per story_key among the recent stories."""
+        posted: Dict[str, datetime] = {}
+        for story in recent_stories or []:
+            key = story.get('story_key')
+            when = story.get('collected_date')
+            if not key or not when:
+                continue
+            if isinstance(when, str):
+                try:
+                    when = datetime.fromisoformat(when)
+                except ValueError:
+                    continue
+            if key not in posted or when > posted[key]:
+                posted[key] = when
+        return posted
+
+    @staticmethod
+    def _covered_story_key(result: Dict,
+                           recent_stories: Optional[List[Dict]]) -> Optional[str]:
+        """story_key of the recent story this result says it covers.
+
+        The model returns the [S<n>] tag number; anything out of range or
+        unparseable means we cannot identify the story, and the caller then
+        treats the update as un-rate-limitable (see _cooldown_remaining).
+        """
+        try:
+            n = int(result.get('covers'))
+        except (TypeError, ValueError):
+            return None
+        stories = (recent_stories or [])[:MAX_RECENT_STORIES]
+        if 1 <= n <= len(stories):
+            return stories[n - 1].get('story_key')
+        return None
+
+    @staticmethod
+    def _cooldown_remaining(story_key: Optional[str],
+                            story_posted_at: Dict[str, datetime]) -> Optional[float]:
+        """Hours left before this story may be updated again, else None.
+
+        None means "let it through": either the story was identified and its
+        window has expired, or it could not be identified at all. Blocking
+        unidentified updates would hand the model a way to mute the channel
+        by omitting one field.
+        """
+        if not story_key:
+            return None
+        last = story_posted_at.get(story_key)
+        if last is None:
+            return None
+        elapsed = datetime.now() - last
+        window = timedelta(hours=settings.UPDATE_COOLDOWN_HOURS)
+        if elapsed >= window:
+            return None
+        return (window - elapsed).total_seconds() / 3600
+
     def _build_prompt(self, articles: List[Dict],
                       recent_stories: Optional[List[Dict]] = None) -> str:
         items = []
@@ -275,8 +358,8 @@ class AIProcessor:
         recent_block = ""
         if recent_stories:
             lines = []
-            for story in recent_stories[:MAX_RECENT_STORIES]:
-                lines.append(f"- {story.get('title', '')}")
+            for n, story in enumerate(recent_stories[:MAX_RECENT_STORIES], 1):
+                lines.append(f"[S{n}] {story.get('title', '')}")
                 summary = (story.get('summary') or '').strip()
                 if summary:
                     lines.append(f"  published: {summary[:MAX_RECENT_SUMMARY_CHARS]}")

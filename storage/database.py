@@ -49,6 +49,12 @@ class Database:
             cursor.execute("ALTER TABLE articles ADD COLUMN resolved_url TEXT")
         if columns and 'summary_ar' not in columns:
             cursor.execute("ALTER TABLE articles ADD COLUMN summary_ar TEXT")
+        # Groups every post about one running story (the original and each
+        # later "Mise à jour") so updates can be rate-limited per story.
+        # NULL on rows predating this column - callers fall back to the id,
+        # which makes each old row its own story.
+        if columns and 'story_key' not in columns:
+            cursor.execute("ALTER TABLE articles ADD COLUMN story_key TEXT")
         cursor.execute(self.REJECTED_URLS_SCHEMA)
         # get_unpublished_articles probes distribution_log per article/channel
         if columns:
@@ -196,8 +202,9 @@ class Database:
                 INSERT INTO articles (
                     url, title, source, source_type, published_date,
                     language, category, content, summary, summary_ar,
-                    resolved_url, author, image_url, retweets, likes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    resolved_url, author, image_url, retweets, likes,
+                    story_key
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 article.get('url'),
                 article.get('title'),
@@ -213,7 +220,8 @@ class Database:
                 article.get('author'),
                 article.get('image_url'),
                 article.get('retweets'),
-                article.get('likes')
+                article.get('likes'),
+                article.get('story_key')
             ))
 
             article_id = cursor.lastrowid

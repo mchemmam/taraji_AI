@@ -65,22 +65,41 @@ class KeywordFilter:
         return all_kw
 
     @staticmethod
-    def _compile_matchers(keywords_by_lang: dict) -> dict:
-        """Per-language (keyword, pattern) pairs for _match_exact.
+    def _surface_forms(keyword: str) -> List[str]:
+        """Spellings of a keyword that all mean the same club.
+
+        Arabic attaches prepositions as prefixes. Most keep the article
+        intact and are found by substring matching anyway ("بالترجي",
+        "والترجي"), but "لـ" + "الترجي" contracts to "للترجي" - the
+        article's alef is elided, so the literal keyword is no longer a
+        substring and the story is dropped without a trace (2026-07-22:
+        "3 وديات للترجي في تربص عين دراهم").
+        """
+        forms = [keyword]
+        if keyword.startswith('ال'):
+            forms.append('لل' + keyword[2:])
+        return forms
+
+    @classmethod
+    def _compile_matchers(cls, keywords_by_lang: dict) -> dict:
+        """Per-language (keyword, form, pattern) triples for _match_exact.
 
         Keywords containing an all-caps token get a whole-word,
         case-sensitive pattern; all others keep substring matching
-        (pattern None).
+        (pattern None). `keyword` is the canonical name used for logging,
+        `form` the actual spelling being looked for.
         """
         compiled = {}
         for lang, keywords in keywords_by_lang.items():
-            pairs = []
+            triples = []
             for keyword in keywords:
-                if any(len(tok) >= 2 and tok.isupper() for tok in keyword.split()):
-                    pairs.append((keyword, re.compile(rf'\b{re.escape(keyword)}\b')))
-                else:
-                    pairs.append((keyword, None))
-            compiled[lang] = pairs
+                cased = any(len(tok) >= 2 and tok.isupper()
+                            for tok in keyword.split())
+                for form in cls._surface_forms(keyword):
+                    pattern = (re.compile(rf'\b{re.escape(form)}\b')
+                               if cased else None)
+                    triples.append((keyword, form, pattern))
+            compiled[lang] = triples
         return compiled
 
     @staticmethod
@@ -97,13 +116,26 @@ class KeywordFilter:
             languages = [language] if language in matchers_by_lang else []
 
         for lang in languages:
-            for keyword, pattern in matchers_by_lang[lang]:
+            for keyword, form, pattern in matchers_by_lang[lang]:
                 if pattern is not None:
                     if pattern.search(text):
                         return keyword
-                elif keyword.lower() in text_lower:
+                elif form.lower() in text_lower:
                     return keyword
         return None
+
+    @staticmethod
+    def _is_shouty(text: str) -> bool:
+        """True when the text is mostly capitals (headline in ALL CAPS).
+
+        Tells a deliberate abbreviation apart from shouting: in ordinary
+        mixed-case prose an all-caps "EST" can only be the club, because
+        the French verb and the compass point are written lowercase.
+        """
+        letters = [c for c in text if c.isalpha()]
+        if len(letters) < 12:
+            return False
+        return sum(c.isupper() for c in letters) / len(letters) > 0.6
 
     def matches(self, text: str, language: str = 'unknown') -> Tuple[bool, Optional[str]]:
         """
@@ -153,13 +185,29 @@ class KeywordFilter:
 
         # Step 5: Check contextual keywords (require context words nearby).
         # Whole-word match on the original-case text - see __init__.
+        shouty = self._is_shouty(text)
         for keyword, context_words in self.contextual_keywords.items():
-            if self._contextual_patterns[keyword].search(text):
-                # Check if any context word appears in the text
-                for context in context_words:
-                    if context.lower() in text_lower:
-                        log.info(f"✅ Matched contextual keyword: {keyword} + {context}")
-                        return True, f"{keyword} (contextual)"
+            if not self._contextual_patterns[keyword].search(text):
+                continue
+            # In an ALL-CAPS headline an all-caps "EST" proves nothing - the
+            # verb shouts identically - and the context list is no help
+            # either, since "Tunis" is a substring of the "TUNISIENS" that
+            # ends half the local headlines. Ignore the keyword outright.
+            if keyword.isupper() and shouty:
+                continue
+            # Check if any context word appears in the text
+            for context in context_words:
+                if context.lower() in text_lower:
+                    log.info(f"✅ Matched contextual keyword: {keyword} + {context}")
+                    return True, f"{keyword} (contextual)"
+            # An all-caps abbreviation in mixed-case text stands on its own:
+            # the context list only covers competition/place words, so club
+            # news phrased without them was dropped silently (2026-07-22:
+            # "L'EST renonce au recrutement Seydou Lamine Sacko",
+            # "EST : Kais Attia démissionne").
+            if keyword.isupper():
+                log.info(f"✅ Matched all-caps abbreviation: {keyword}")
+                return True, f"{keyword} (abbreviation)"
 
         # Step 6: Fuzzy matching for typos (only for main club name variations)
         main_keywords = [

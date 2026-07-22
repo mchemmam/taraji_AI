@@ -166,5 +166,15 @@ GEMINI_MODELS = [
 # change those.
 IRRELEVANT_REJECTION_TTL_HOURS = 6
 
+# A running saga (mercato especially) produces a fresh "decisive" angle every
+# few hours, and each one clears any materiality bar the model is given: the
+# Tougaï->Al Ahli story alone spawned 8 near-identical "Mise à jour" posts
+# over 2026-07-19..21. Rather than tighten the bar until updates stop
+# entirely (which is what happened next - 07-22 published 2 posts, 0 updates,
+# while 39 items were buried as already-covered), cap the *rate*: at most one
+# update per story per this many hours. Materiality still decides whether an
+# item is an update at all; this only decides how often one may land.
+UPDATE_COOLDOWN_HOURS = 12
+
 # Telegram settings
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
