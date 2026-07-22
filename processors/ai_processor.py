@@ -51,6 +51,7 @@ For EACH numbered item below, return a JSON object with:
 - "duplicate_of": the id (integer) of an EARLIER item in this batch that covers the same story, or null. Two items cover the same story when a reader learns nothing new from the second one - the same event reported by another source or in another language. A follow-up that adds new information is NOT a duplicate. When a later item duplicates an earlier one but mentions extra material details, still mark it as a duplicate - and fold those details into the EARLIER item's summaries.
 - "already_covered": true if the item covers the same story as one in the "Recently covered stories" list above - the same event, whatever the source or language. false otherwise, or if no list was given.
 - "covers": only meaningful when "already_covered" is true, otherwise null. The tag number of the story it covers, as an integer (for "[S7]" return 7). If it continues several, give the most recent one - the lowest number, since the list is newest first.
+- "contradicts": only meaningful when "already_covered" is true, otherwise false. True when this item REVERSES, CANCELS, CORRECTS or DENIES something we already told our readers - a signing called off, a deal collapsing, a player staying after a reported departure, a club denying a reported fact, a decision overturned. We announced the opposite; leaving fans with the wrong story is the worst outcome there is, so judge this generously - if the item cannot be true at the same time as our published line, it contradicts. When "contradicts" is true, also fill "update_details".
 - "update_details": only meaningful when "already_covered" is true, otherwise null. Set it when this item carries a material new development in that story - something a reader who saw our earlier post still does not know: a rumored or negotiated move becoming OFFICIAL, a concrete fee/amount, a medical/signing date, a contract length, a collapse or U-turn. Before setting it, scan EVERY line of the "Recently covered stories" list, not just one - especially any line already framed "Mise à jour :"/"تحديث:": if any of them already conveys this same development, then it is NOT new, leave it null (we already posted it). These are NOT updates, leave null: another outlet reporting the same thing, a reworded rumor with no new fact, a farewell/tribute/reaction/thank-you message, a player interview about an already-known move, or a pure opinion/preview piece. When unsure, use null.
 - "category": one of "match", "transfer", "injury", "statement", "finance", "other"
 - "summary_fr": a factual 2-3 sentence summary in French, focused on facts concerning Espérance Sportive de Tunis (or, for an item about a monitored player, on that player). When "update_details" is set, start with "Mise à jour :" and focus on the NEW facts, recalling the covered story in half a sentence at most.
@@ -186,8 +187,16 @@ class AIProcessor:
                 # One update per story per cooldown window: a hot saga always
                 # supplies another "material" angle, so materiality alone
                 # never converges (Tougaï produced 8 posts in 3 days).
+                # A contradiction is exempt: when the story reverses, our
+                # readers are holding a line we have since disproved, and
+                # "we already posted about this recently" is the very reason
+                # the correction has to go out, not a reason to hold it.
                 story_key = self._covered_story_key(r, recent_stories)
-                if has_update:
+                contradicts = bool(r.get('contradicts'))
+                if has_update and contradicts:
+                    log.info(f"⚠️  Contradiction of a published story - cooldown "
+                             f"bypassed: {article.get('title', '')[:70]}")
+                if has_update and not contradicts:
                     blocked_for = self._cooldown_remaining(story_key, story_posted_at)
                     if blocked_for is not None:
                         log.info(f"♻️  Update suppressed ({blocked_for:.1f}h left of "

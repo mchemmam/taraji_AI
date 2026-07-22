@@ -166,6 +166,18 @@ GEMINI_MODELS = [
 # change those.
 IRRELEVANT_REJECTION_TTL_HOURS = 6
 
+# 'already_covered' looks like a durable fact but is really two judgments
+# glued together: "same story as one we ran" (durable - a re-run cannot
+# change it) and "and it adds nothing new" (stochastic, exactly as fallible
+# as 'irrelevant'). The second half buried "L'EST renonce au recrutement
+# Seydou Lamine Sacko" on 2026-07-22 - the cancellation of a signing we had
+# already announced to fans - permanently, on one model call. Let these
+# expire too, so a misjudged story gets a second reading while it is still
+# news. Set to UPDATE_COOLDOWN_HOURS: an item comes back up for judgment at
+# roughly the moment its story is eligible to be updated again, so the
+# re-read can actually change the outcome instead of being re-suppressed.
+ALREADY_COVERED_REJECTION_TTL_HOURS = 12
+
 # A running saga (mercato especially) produces a fresh "decisive" angle every
 # few hours, and each one clears any materiality bar the model is given: the
 # Tougaï->Al Ahli story alone spawned 8 near-identical "Mise à jour" posts

@@ -266,18 +266,24 @@ class Database:
         """Return the subset of given URLs already seen - stored as articles
         or rejected (matched against collected and resolved URLs).
 
-        'irrelevant' and 'unverified_date' rejections expire after
-        IRRELEVANT_REJECTION_TTL_HOURS: the first verdict comes from a
-        single stochastic AI call, the second from one publisher-feed
-        snapshot - both have wrongly buried legitimate stories, so a fresh
-        URL gets re-judged. All other rejection reasons
-        (stale/duplicate/already_covered) are facts that a re-run cannot
-        change and stay permanent.
+        Rejections whose verdict came from a judgment rather than a fact
+        expire and get re-read: 'irrelevant' (one stochastic AI call),
+        'unverified_date' (one publisher-feed snapshot) and
+        'already_covered' (the "adds nothing new" half of it is a judgment,
+        and it has buried the cancellation of a signing we had already
+        announced). 'stale' and 'duplicate' are facts a re-run cannot
+        change, so they stay permanent.
         """
         existing = set()
         cursor = self.conn.cursor()
 
-        ttl_hours = int(settings.IRRELEVANT_REJECTION_TTL_HOURS)
+        # reason -> hours after which the rejection stops hiding the URL
+        ttl_by_reason = {
+            ('irrelevant', 'unverified_date'):
+                int(settings.IRRELEVANT_REJECTION_TTL_HOURS),
+            ('already_covered',):
+                int(settings.ALREADY_COVERED_REJECTION_TTL_HOURS),
+        }
         chunk_size = 200
         for i in range(0, len(urls), chunk_size):
             chunk = urls[i:i + chunk_size]
@@ -286,9 +292,12 @@ class Database:
                 not_expired = ""
                 if table == 'rejected_urls':
                     # rejected_date is CURRENT_TIMESTAMP, i.e. UTC
-                    not_expired = f"""
-                    AND NOT (reason IN ('irrelevant', 'unverified_date')
-                             AND rejected_date < datetime('now', '-{ttl_hours} hours'))"""
+                    not_expired = "".join(
+                        f"""
+                    AND NOT (reason IN ({','.join("'" + r + "'" for r in reasons)})
+                             AND rejected_date < datetime('now', '-{hours} hours'))"""
+                        for reasons, hours in ttl_by_reason.items()
+                    )
                 cursor.execute(f"""
                     SELECT url, resolved_url FROM {table}
                     WHERE (url IN ({placeholders}) OR resolved_url IN ({placeholders}))
