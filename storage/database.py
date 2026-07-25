@@ -23,6 +23,10 @@ def _utcnow() -> datetime:
 class Database:
     """SQLite database manager for Taraji AI"""
 
+    # collection_stats.source value marking a run-start heartbeat, kept
+    # distinct so per-source stats could still be written alongside later
+    HEARTBEAT_SOURCE = '__run__'
+
     # URLs the AI judged irrelevant/stale - remembered so the same article
     # is not re-extracted and re-judged on every scheduled run
     REJECTED_URLS_SCHEMA = """
@@ -496,6 +500,39 @@ class Database:
         ))
         self.conn.commit()
 
+    def record_run_heartbeat(self) -> Optional[float]:
+        """Stamp this run's start into collection_stats; return the gap.
+
+        The gap is minutes since the previous run started, and it is the
+        only evidence we have that the external 15-minute trigger
+        (cron-job.org) is still alive: when it stops, no run fails and no
+        alert fires anywhere, the pipeline just drops to whatever fraction
+        of its cron slots GitHub feels like honouring.
+
+        Returns None when there is no previous heartbeat - a fresh deploy,
+        or the first run after this shipped. Callers must not read that as
+        a zero gap; there is nothing to compare against yet.
+        """
+        cursor = self.conn.cursor()
+        row = cursor.execute("""
+            SELECT MAX(timestamp) FROM collection_stats WHERE source = ?
+        """, (self.HEARTBEAT_SOURCE,)).fetchone()
+        previous = row[0] if row else None
+
+        cursor.execute("INSERT INTO collection_stats (source) VALUES (?)",
+                       (self.HEARTBEAT_SOURCE,))
+        self.conn.commit()
+
+        if not previous:
+            return None
+        try:
+            # DEFAULT CURRENT_TIMESTAMP writes naive UTC, so this compares
+            # like-for-like against _utcnow() on a CEST laptop too
+            last = datetime.fromisoformat(previous)
+        except (TypeError, ValueError):
+            return None
+        return (_utcnow() - last).total_seconds() / 60
+
     def prune_old_data(self, days: int = 30) -> Tuple[int, int]:
         """Blank bulky article text and drop stale rejected URLs.
 
@@ -525,6 +562,14 @@ class Database:
             WHERE rejected_date < ?
         """, (cutoff,))
         rejected_dropped = cursor.rowcount
+
+        # Heartbeats have their own, much shorter retention - they arrive
+        # ~200x a day and only serve the cadence watchdog
+        cursor.execute("""
+            DELETE FROM collection_stats
+            WHERE source = ? AND timestamp < ?
+        """, (self.HEARTBEAT_SOURCE,
+              _utcnow() - timedelta(days=settings.RUN_HEARTBEAT_RETENTION_DAYS)))
 
         self.conn.commit()
         return articles_pruned, rejected_dropped

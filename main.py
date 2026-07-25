@@ -195,6 +195,18 @@ def cmd_collect(test_mode=False):
     log.info("Starting Taraji AI News Collection")
     log.info("=" * 60)
 
+    # Cadence watchdog, before any work so the early returns below cannot
+    # skip it: a missing run is invisible otherwise (see RUN_GAP_ALERT_MINUTES)
+    with get_db() as db:
+        gap = db.record_run_heartbeat()
+    if gap is not None and gap > settings.RUN_GAP_ALERT_MINUTES:
+        log.warning(f"⚠️  {gap:.0f} min since the previous run "
+                    f"(expected ~15) - the external trigger may be down")
+        _ops_alert(f"⚠️ Taraji AI: {gap:.0f} min since the last collection run "
+                   f"(expected ~15). Check cron-job.org is still firing "
+                   f"workflow_dispatch - GitHub's own cron only covers a "
+                   f"fraction of its slots.")
+
     # Step 1: Collect from all sources
     log.info("\n[1/7] Collecting from Google News...")
     google_articles = collect_google_news()

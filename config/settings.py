@@ -48,19 +48,15 @@ MAX_ARTICLE_AGE_DAYS = 3
 
 # RSS feed sources - this list is what the RSS collector actually fetches;
 # add/remove feeds here
+#
+# Nessma TV's two feeds (/ar/rss/news/27, /fr/rss/news/4) were removed on
+# 2026-07-25: Cloudflare 403s them from GitHub runner IPs on every single
+# run (~200 ERROR lines/day) while returning 200 to a residential IP with
+# the collector's own browser User-Agent, so no header change fixes it. They
+# had not yielded an article since 2025-11-20. Nessma stories still reach
+# us through Google News under the source name "Nessma TV".
 RSS_FEEDS = [
-    # Tunisian news (Arabic)
-    {
-        "name": "Nessma TV Sport (TN)",
-        "url": "https://www.nessma.tv/ar/rss/news/27",
-        "language": "ar"
-    },
     # Tunisian news (French)
-    {
-        "name": "Nessma TV Sport (TN)",
-        "url": "https://www.nessma.tv/fr/rss/news/4",
-        "language": "fr"
-    },
     {
         "name": "Mosaique FM (TN)",
         "url": "https://www.mosaiquefm.net/fr/rss",
@@ -76,6 +72,24 @@ MIN_ARTICLE_LENGTH = 100  # characters - shorter extractions are discarded
 # are kept forever) to cap the growth of the git-committed database. Note:
 # no VACUUM - rewriting the whole file would defeat git's delta compression.
 CONTENT_RETENTION_DAYS = 30
+
+# Cadence watchdog. The punctual every-15-minutes trigger is cron-job.org
+# firing workflow_dispatch - external, deliberate, and invisible from this
+# repo. The workflow's own cron is the failover, but GitHub runs scheduled
+# jobs best-effort: measured over 22h on 2026-07-25 it fired 13 of ~88 slots
+# (15%), against 87 dispatches from cron-job.org. So if the external trigger
+# ever stops, collection does not fail - it silently drops to roughly one run
+# every 100 minutes, and the only symptom is a channel that feels slow.
+# A run that starts more than this many minutes after the previous one pings
+# the ops chat. 45 leaves room for a skipped slot plus a slow run without
+# crying wolf. During a real outage the surviving cron runs keep re-alerting
+# every ~100 minutes; that repetition is intended, not a misfire.
+RUN_GAP_ALERT_MINUTES = 45
+
+# Heartbeat rows are one per run (~200/day) in a database that is committed
+# to git on every run, so they are pruned on the same pass as article text.
+# A week is enough to answer "how often did we actually run?" after the fact.
+RUN_HEARTBEAT_RETENTION_DAYS = 7
 
 # Classification categories
 CATEGORIES = {
