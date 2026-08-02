@@ -38,6 +38,18 @@ class Database:
         )
     """
 
+    # Per-publisher extraction health, driving both the circuit breaker and
+    # the alert suppression. One row per domain, created on first failure.
+    PUBLISHER_HEALTH_SCHEMA = """
+        CREATE TABLE IF NOT EXISTS publisher_health (
+            domain TEXT PRIMARY KEY,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            last_reason TEXT,
+            last_failure_date DATETIME,
+            last_alert_date DATETIME
+        )
+    """
+
     def __init__(self, db_path: str = None):
         self.db_path = db_path or settings.DATABASE_PATH
         self.conn = None
@@ -70,6 +82,7 @@ class Database:
         if columns and 'story_key' not in columns:
             cursor.execute("ALTER TABLE articles ADD COLUMN story_key TEXT")
         cursor.execute(self.REJECTED_URLS_SCHEMA)
+        cursor.execute(self.PUBLISHER_HEALTH_SCHEMA)
         # get_unpublished_articles probes distribution_log per article/channel
         if columns:
             cursor.execute("""
@@ -183,6 +196,7 @@ class Database:
         """)
 
         cursor.execute(self.REJECTED_URLS_SCHEMA)
+        cursor.execute(self.PUBLISHER_HEALTH_SCHEMA)
 
         # Distribution log table
         cursor.execute("""
@@ -337,6 +351,88 @@ class Database:
             INSERT OR REPLACE INTO rejected_urls (url, resolved_url, reason)
             VALUES (?, ?, ?)
         """, (url, resolved_url, reason))
+        self.conn.commit()
+
+    def record_extraction_outcome(self, domain: str, ok: bool,
+                                  reason: str = None) -> int:
+        """Update a publisher's failure streak; return its new length.
+
+        A success resets the streak to zero rather than decrementing it: a
+        publisher that is serving again should get its full trip budget back
+        before we stop fetching it, and the streak is only ever meant to
+        answer "is this host down right now?".
+        """
+        if not domain:
+            return 0
+        cursor = self.conn.cursor()
+        if ok:
+            cursor.execute("""
+                UPDATE publisher_health
+                SET consecutive_failures = 0, last_reason = NULL
+                WHERE domain = ?
+            """, (domain,))
+            self.conn.commit()
+            return 0
+
+        cursor.execute("""
+            INSERT INTO publisher_health
+                (domain, consecutive_failures, last_reason, last_failure_date)
+            VALUES (?, 1, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(domain) DO UPDATE SET
+                consecutive_failures = consecutive_failures + 1,
+                last_reason = excluded.last_reason,
+                last_failure_date = CURRENT_TIMESTAMP
+        """, (domain, reason))
+        row = cursor.execute(
+            "SELECT consecutive_failures FROM publisher_health WHERE domain = ?",
+            (domain,)
+        ).fetchone()
+        self.conn.commit()
+        return row['consecutive_failures'] if row else 1
+
+    def get_tripped_publishers(self) -> Dict[str, str]:
+        """Domains whose circuit is open, as {domain: last failure reason}.
+
+        Open means the streak reached EXTRACTION_CIRCUIT_TRIP *and* the last
+        failure is recent. Letting the cooldown expire is what re-opens the
+        domain for a probe - no separate half-open bookkeeping, because a
+        failed probe simply stamps last_failure_date again.
+        """
+        cursor = self.conn.cursor()
+        rows = cursor.execute("""
+            SELECT domain, last_reason FROM publisher_health
+            WHERE consecutive_failures >= ?
+            AND last_failure_date > datetime('now', ?)
+        """, (int(settings.EXTRACTION_CIRCUIT_TRIP),
+              f'-{int(settings.EXTRACTION_CIRCUIT_COOLDOWN_HOURS)} hours')).fetchall()
+        return {row['domain']: row['last_reason'] or 'unknown' for row in rows}
+
+    def unalerted_publishers(self, domains) -> set:
+        """Subset of `domains` not alerted about within the alert cooldown."""
+        domains = set(domains)
+        if not domains:
+            return set()
+        cursor = self.conn.cursor()
+        placeholders = ','.join('?' * len(domains))
+        rows = cursor.execute(f"""
+            SELECT domain FROM publisher_health
+            WHERE domain IN ({placeholders})
+            AND last_alert_date > datetime('now', ?)
+        """, list(domains) + [
+            f'-{int(settings.EXTRACTION_ALERT_COOLDOWN_HOURS)} hours'
+        ]).fetchall()
+        return domains - {row['domain'] for row in rows}
+
+    def mark_publishers_alerted(self, domains):
+        """Start the alert cooldown for each domain named in an ops alert."""
+        if not domains:
+            return
+        cursor = self.conn.cursor()
+        cursor.executemany("""
+            INSERT INTO publisher_health (domain, last_alert_date)
+            VALUES (?, CURRENT_TIMESTAMP)
+            ON CONFLICT(domain) DO UPDATE SET last_alert_date = CURRENT_TIMESTAMP
+        """, [(domain,) for domain in domains])
         self.conn.commit()
 
     def get_unpublished_articles(self, channel: str = 'telegram',
@@ -562,6 +658,16 @@ class Database:
             WHERE rejected_date < ?
         """, (cutoff,))
         rejected_dropped = cursor.rowcount
+
+        # Publishers that recovered and have been quiet since carry no state
+        # worth keeping. Rows with a live streak stay, however old, so an
+        # open circuit is never silently reset by a pruning pass.
+        cursor.execute("""
+            DELETE FROM publisher_health
+            WHERE consecutive_failures = 0
+            AND (last_failure_date IS NULL OR last_failure_date < ?)
+            AND (last_alert_date IS NULL OR last_alert_date < ?)
+        """, (cutoff, cutoff))
 
         # Heartbeats have their own, much shorter retention - they arrive
         # ~200x a day and only serve the cadence watchdog

@@ -68,6 +68,26 @@ RSS_FEEDS = [
 EXTRACTION_TIMEOUT = 10  # seconds
 MIN_ARTICLE_LENGTH = 100  # characters - shorter extractions are discarded
 
+# Publisher circuit breaker. When a publisher's origin goes down, every URL
+# it appears in costs a full EXTRACTION_TIMEOUT and fails identically, run
+# after run: mosaiquefm.net 503'd behind Cloudflare from 2026-08-01 17:15Z
+# and produced 38 dead fetches over the next 19 hours, ~4 minutes of run
+# time spent waiting on a host we already knew was down. After this many
+# consecutive failures the domain is skipped entirely until the cooldown
+# lapses, then one URL is let through as a probe - if it fails, the streak
+# grows and the domain closes again for another cooldown. A single success
+# clears the streak. Skipped URLs behave exactly like failed extractions
+# (title-only, held by the existing guards), so nothing is buried by this.
+EXTRACTION_CIRCUIT_TRIP = 5
+EXTRACTION_CIRCUIT_COOLDOWN_HOURS = 3
+
+# Repeat "extraction degraded" alerts for a publisher we have already
+# reported are noise: the Mosaique outage above fired 15 identical pings.
+# A domain already alerted about stays quiet for this long. The suppression
+# is per domain, never global - a second publisher failing still pages
+# immediately instead of hiding behind the first one's outage.
+EXTRACTION_ALERT_COOLDOWN_HOURS = 12
+
 # Full article text is blanked after this many days (summaries and metadata
 # are kept forever) to cap the growth of the git-committed database. Note:
 # no VACUUM - rewriting the whole file would defeat git's delta compression.

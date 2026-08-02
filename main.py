@@ -299,35 +299,88 @@ def cmd_collect(test_mode=False):
     log.info("\n[5/7] Extracting article content...")
     extractor = create_content_extractor()
     extracted_count = 0
+    attempted_count = 0
     extraction_failures = Counter()
-    for article in new_articles:
-        url = article.get('url', '')
-        if not url:
-            continue
-        result = extractor.extract(url)
-        if result:
-            article['content'] = result['text']
-            article['author'] = ', '.join(result.get('authors', []))
-            article['image_url'] = result.get('top_image') or ''
-            article['resolved_url'] = result.get('resolved_url', url)
-            article['page_date'] = result.get('page_date')
-            extracted_count += 1
-        else:
-            article['resolved_url'] = extractor.resolve_url(url)
-            reason = extractor.last_failure or 'unknown'
-            extraction_failures[f"{_domain(article['resolved_url'])} ({reason})"] += 1
-    log.info(f"Extracted content from {extracted_count}/{len(new_articles)} articles")
-    if extraction_failures:
-        breakdown = ", ".join(f"{key} ×{count}"
-                              for key, count in extraction_failures.most_common())
-        log.warning(f"⚠️  Extraction failures: {breakdown}")
-        # A mostly-unreadable batch means the stale guards are running blind
-        # (title-only publishes, no on-page dates): extraction quietly
-        # collapsed from 28/34 to 1/4 over 2026-07-15..19 before anyone
-        # noticed. Ping the private ops chat, never the public channel.
-        if extracted_count * 2 < len(new_articles) and len(new_articles) >= 2:
-            _ops_alert(f"⚠️ Taraji AI: extraction degraded - only {extracted_count}/"
-                       f"{len(new_articles)} articles readable this run ({breakdown})")
+    skipped_by_domain = Counter()
+    failed_domains = set()
+    with get_db() as db:
+        tripped = db.get_tripped_publishers()
+        for article in new_articles:
+            url = article.get('url', '')
+            if not url:
+                continue
+            # Resolve before deciding anything: a Google News link only names
+            # its publisher once decoded, and the domain is what the circuit
+            # breaker keys on. This is also the resolve the failure path used
+            # to redo after extract() had already paid for it.
+            resolved = extractor.resolve_url(url)
+            article['resolved_url'] = resolved
+            domain = _domain(resolved)
+            if domain in tripped:
+                skipped_by_domain[domain] += 1
+                continue
+            attempted_count += 1
+            result = extractor.extract(resolved)
+            if result:
+                article['content'] = result['text']
+                article['author'] = ', '.join(result.get('authors', []))
+                article['image_url'] = result.get('top_image') or ''
+                article['page_date'] = result.get('page_date')
+                extracted_count += 1
+                db.record_extraction_outcome(domain, ok=True)
+            else:
+                reason = extractor.last_failure or 'unknown'
+                extraction_failures[f"{domain} ({reason})"] += 1
+                failed_domains.add(domain)
+                streak = db.record_extraction_outcome(domain, ok=False,
+                                                      reason=reason)
+                # Trip mid-batch as well as between runs: a down publisher
+                # often contributes several URLs to the same batch, and once
+                # the cooldown has lapsed this keeps the retry to one probe.
+                if streak >= settings.EXTRACTION_CIRCUIT_TRIP:
+                    tripped[domain] = reason
+                    log.warning(
+                        f"⛔ Circuit open for {domain} after {streak} "
+                        f"consecutive failures ({reason}) - not fetching it "
+                        f"for {settings.EXTRACTION_CIRCUIT_COOLDOWN_HOURS}h"
+                    )
+
+        # Denominator is what we actually tried: URLs skipped behind an open
+        # circuit are not evidence about extraction, and counting them would
+        # keep the ratio below the alert threshold for the whole outage.
+        log.info(f"Extracted content from {extracted_count}/{attempted_count} "
+                 f"attempted articles")
+        if skipped_by_domain:
+            skipped_note = ", ".join(f"{domain} ×{count}" for domain, count
+                                     in skipped_by_domain.most_common())
+            log.warning(f"⛔ Skipped, publisher circuit open: {skipped_note}")
+
+        if extraction_failures:
+            breakdown = ", ".join(f"{key} ×{count}"
+                                  for key, count in extraction_failures.most_common())
+            log.warning(f"⚠️  Extraction failures: {breakdown}")
+            # A mostly-unreadable batch means the stale guards are running
+            # blind (title-only publishes, no on-page dates): extraction
+            # quietly collapsed from 28/34 to 1/4 over 2026-07-15..19 before
+            # anyone noticed. Ping the private ops chat, never the public
+            # channel - and only about publishers not already reported, so
+            # one publisher's outage cannot page 15 times in 19 hours.
+            if extracted_count * 2 < attempted_count and attempted_count >= 2:
+                unreported = db.unalerted_publishers(failed_domains)
+                if unreported:
+                    message = (f"⚠️ Taraji AI: extraction degraded - only "
+                               f"{extracted_count}/{attempted_count} articles "
+                               f"readable this run ({breakdown})")
+                    if skipped_by_domain:
+                        message += f"\nCircuit open, not fetched: {skipped_note}"
+                    message += (f"\nQuiet for {settings.EXTRACTION_ALERT_COOLDOWN_HOURS}h "
+                                f"on: {', '.join(sorted(unreported))}")
+                    _ops_alert(message)
+                    db.mark_publishers_alerted(unreported)
+                else:
+                    log.info(f"Ops alert suppressed - already reported within "
+                             f"{settings.EXTRACTION_ALERT_COOLDOWN_HOURS}h: "
+                             f"{', '.join(sorted(failed_domains))}")
 
     # Blocked publishers can hide behind a Google News attribution and only
     # reveal themselves (msn.com) once the redirect is resolved - drop those too
