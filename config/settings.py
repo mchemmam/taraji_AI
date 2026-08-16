@@ -37,6 +37,13 @@ GNEWS_MAX_RESULTS = 100  # Max results per query
 # 1-day freshness window - so we never ingest them in the first place.
 SOURCE_BLOCKLIST = [
     "MSN",
+    # mshale.com, blocked 2026-08-16. Reaches us through Google News under the
+    # publisher name "Mshale", serving Arabic football copy on random-hash paths
+    # (/1268f21f/5c02935c72SMJJT0jbM) - a scraper domain, not a newsroom. Its
+    # three ingested items were all stale rehashes or fabricated, and the hash
+    # paths mean no stable URL to date-check against. "mshale" also matches the
+    # domain on the post-resolution pass if the publisher name ever changes.
+    "Mshale",
 ]
 
 # Hard ceiling on article age, enforced against the date printed on the
